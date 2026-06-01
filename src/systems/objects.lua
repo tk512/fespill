@@ -1,0 +1,269 @@
+-- src/systems/objects.lua
+-- The sprite-object layer: everything that sits ON TOP of the ground tiles —
+-- buildings, trees, rocks, future decorations. This is the piece that lets you
+-- place detailed art on a SINGLE tile or ACROSS MULTIPLE tiles, SimCity-2000
+-- style, and have it depth-sort correctly against the terrain and the boat.
+--
+-- An object is just data:
+--   {
+--     tx, ty,            -- top-left tile it occupies (1-based)
+--     w = 1, h = 1,      -- footprint size in tiles (e.g. a 2x2 warehouse)
+--     sprite = nil,      -- optional image path under assets/ (e.g. "ports/x.png")
+--     draw = fn(obj, g),  -- placeholder drawing, called with footprint geometry g
+--     data = ...,        -- anything the owner wants to stash
+--   }
+--
+-- When a `sprite` PNG exists it is blitted to cover the footprint exactly
+-- (scaled to the diamond width, base-anchored at the footprint center). When
+-- it doesn't, `draw(obj, g)` paints the in-code placeholder. So art drops in
+-- with zero code changes — exactly the workflow we want.
+
+local config = require("src.config")
+local Assets = require("src.assets")
+local Iso    = require("src.systems.iso")
+
+local Objects = {}
+Objects.__index = Objects
+
+-- How much of the footprint width the sprite image should fill (a little over
+-- 1.0 lets art overhang its tiles slightly, like SC2K building sprites).
+local SPRITE_FILL = 1.0
+
+function Objects.new()
+    return setmetatable({ list = {} }, Objects)
+end
+
+function Objects:add(obj)
+    obj.w = obj.w or 1
+    obj.h = obj.h or 1
+    obj.z = obj.z or 0     -- ground height (units) the object stands on
+    obj.depth = Iso.footprintDepth(obj.tx, obj.ty, obj.w, obj.h, config.TILE)
+    self.list[#self.list + 1] = obj
+    return obj
+end
+
+-- Push render items for every object whose footprint touches the visible tile
+-- range. `emit(depth, object)` is called for each; world.lua merges these with
+-- terrain tiles and the boat into one sorted pass.
+function Objects:collectVisible(i0, j0, i1, j1, emit)
+    for _, obj in ipairs(self.list) do
+        local ox0, oy0 = obj.tx, obj.ty
+        local ox1, oy1 = obj.tx + obj.w - 1, obj.ty + obj.h - 1
+        if ox1 >= i0 and ox0 <= i1 and oy1 >= j0 and oy0 <= j1 then
+            emit(obj.depth, obj)
+        end
+    end
+end
+
+-- Draw one object: PNG if present, otherwise its placeholder. Called with the
+-- camera already attached (we draw in iso space).
+function Objects.draw(obj)
+    local g = Iso.footprint(obj.tx, obj.ty, obj.w, obj.h, config.TILE)
+    g.z = obj.z or 0
+
+    local img = obj.sprite and Assets.image(obj.sprite)
+    if img then
+        -- Iso tile sprites (like SimCity's) are bottom-aligned: the bottom tip
+        -- of their ground diamond is the tile's FRONT (south) corner. Anchor the
+        -- image's bottom-center there and scale so its diamond == the footprint
+        -- diamond width. (Per-sprite nudges via obj.spriteScale / offset.)
+        local sx, sy = Iso.project(g.gx1, g.gy1, g.z)
+        local scale = (g.width * SPRITE_FILL * (obj.spriteScale or 1)) / img:getWidth()
+        -- anchor at the sprite's real ground line (bottom of its diamond), not
+        -- the image's bottom edge — so transparent padding doesn't float it.
+        local oy = Assets.imageGroundY(obj.sprite) or img:getHeight()
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.draw(img, sx + (obj.spriteOffX or 0), sy + (obj.spriteOffY or 0),
+            0, scale, scale, img:getWidth() / 2, oy)
+        return
+    end
+
+    if obj.draw then obj.draw(obj, g) end
+end
+
+-- ── Reusable placeholder drawing helpers (old-school flat-iso friendly) ─────
+
+-- Flat diamond "lot" covering the footprint, at the object's ground height.
+function Objects.drawLot(g, color)
+    local z = g.z or 0
+    local ax, ay = Iso.project(g.gx0, g.gy0, z)
+    local bx, by = Iso.project(g.gx1, g.gy0, z)
+    local cx, cy = Iso.project(g.gx1, g.gy1, z)
+    local dx, dy = Iso.project(g.gx0, g.gy1, z)
+    love.graphics.setColor(color)
+    love.graphics.polygon("fill", ax, ay, bx, by, cx, cy, dx, dy)
+end
+
+-- An extruded iso box over a ground rect (cx,cy = center, hw/hd = half-extents
+-- in ground units) from z0..z1. Three shaded faces => readable volume. This is
+-- for BUILDINGS (which are tall sprites in SC2K), not for the ground.
+function Objects.box(cx, cy, hw, hd, z0, z1, col)
+    local function shade(f) return { col[1] * f, col[2] * f, col[3] * f } end
+    local x0, x1 = cx - hw, cx + hw
+    local y0, y1 = cy - hd, cy + hd
+    local Ax, Ay = Iso.project(x0, y0, z1)
+    local Bx, By = Iso.project(x1, y0, z1)
+    local Cx, Cy = Iso.project(x1, y1, z1)
+    local Dx, Dy = Iso.project(x0, y1, z1)
+    local B0x, B0y = Iso.project(x1, y0, z0)
+    local C0x, C0y = Iso.project(x1, y1, z0)
+    local D0x, D0y = Iso.project(x0, y1, z0)
+    love.graphics.setColor(shade(0.80))
+    love.graphics.polygon("fill", Bx, By, Cx, Cy, C0x, C0y, B0x, B0y) -- right
+    love.graphics.setColor(shade(0.62))
+    love.graphics.polygon("fill", Dx, Dy, Cx, Cy, C0x, C0y, D0x, D0y) -- left
+    love.graphics.setColor(shade(1.00))
+    love.graphics.polygon("fill", Ax, Ay, Bx, By, Cx, Cy, Dx, Dy)     -- top
+end
+
+-- A little 1x1 tree (trunk + canopy), anchored on its tile at height g.z.
+function Objects.drawTree(g)
+    local c = config.colors
+    local sx, sy = Iso.project(g.cx, g.cy, g.z or 0)
+    love.graphics.setColor(0, 0, 0, 0.12)
+    love.graphics.ellipse("fill", sx, sy + 2, 10, 5)
+    love.graphics.setColor(c.tree_trunk)
+    love.graphics.rectangle("fill", sx - 2, sy - 13, 4, 13)
+    love.graphics.setColor(c.tree_leaf)
+    love.graphics.circle("fill", sx, sy - 21, 11)
+    love.graphics.setColor(c.tree_leaf_hi)
+    love.graphics.circle("fill", sx - 3, sy - 24, 7)
+end
+
+-- A more detailed building: shaded walls + rows of windows on the two
+-- viewer-facing faces + a pitched (gable) roof. Much less "boxy" than box().
+local function lerp2(p, q, a) return { p[1] + (q[1] - p[1]) * a, p[2] + (q[2] - p[2]) * a } end
+
+-- Window grid on a face given its 4 screen corners (t1,t2 top edge; b1 under
+-- t1, b2 under t2).
+local function faceWindows(t1, t2, b1, b2, cols, rows)
+    love.graphics.setColor(0.20, 0.24, 0.30, 0.92)
+    for ci = 1, cols do
+        for ri = 1, rows do
+            local u, v = ci / (cols + 1), ri / (rows + 1)
+            local uh, vh = 0.34 / (cols + 1), 0.34 / (rows + 1)
+            local function P(uu, vv)
+                return lerp2(lerp2(t1, t2, uu), lerp2(b1, b2, uu), vv)
+            end
+            local a, b = P(u - uh, v - vh), P(u + uh, v - vh)
+            local c, d = P(u + uh, v + vh), P(u - uh, v + vh)
+            love.graphics.polygon("fill", a[1], a[2], b[1], b[2], c[1], c[2], d[1], d[2])
+        end
+    end
+end
+
+function Objects.building(cx, cy, hw, hd, z, wallH, roofH, wall, roof)
+    local ztop = z + wallH
+    local x0, x1, y0, y1 = cx - hw, cx + hw, cy - hd, cy + hd
+    Objects.box(cx, cy, hw, hd, z, ztop, wall)
+
+    -- windows on the east (x1) and south (y1) faces
+    local function p(gx, gy, zz) local a, b = Iso.project(gx, gy, zz); return { a, b } end
+    faceWindows(p(x1, y0, ztop), p(x1, y1, ztop), p(x1, y0, z), p(x1, y1, z), 3, 2)
+    faceWindows(p(x0, y1, ztop), p(x1, y1, ztop), p(x0, y1, z), p(x1, y1, z), 3, 2)
+
+    -- pitched gable roof (ridge runs along x, at y = cy)
+    if roofH and roofH > 0 then
+        local zr = ztop + roofH
+        local function pj(gx, gy, zz) return Iso.project(gx, gy, zz) end
+        local nwx, nwy = pj(x0, y0, ztop); local nex, ney = pj(x1, y0, ztop)
+        local swx, swy = pj(x0, y1, ztop); local sex, sey = pj(x1, y1, ztop)
+        local r0x, r0y = pj(x0, cy, zr);  local r1x, r1y = pj(x1, cy, zr)
+        local function shade(f) love.graphics.setColor(roof[1]*f, roof[2]*f, roof[3]*f) end
+        shade(1.10); love.graphics.polygon("fill", nwx, nwy, nex, ney, r1x, r1y, r0x, r0y) -- north slope
+        shade(0.80); love.graphics.polygon("fill", swx, swy, sex, sey, r1x, r1y, r0x, r0y) -- south slope
+        shade(0.66); love.graphics.polygon("fill", nwx, nwy, r0x, r0y, swx, swy)           -- west gable
+        shade(0.66); love.graphics.polygon("fill", nex, ney, r1x, r1y, sex, sey)           -- east gable
+    end
+end
+
+-- A THICK forest tile: many overlapping trees filling the tile, so that
+-- neighbouring forest tiles blend into one dense woodland. `salt` makes the
+-- layout deterministic (stable across reloads) without Math.random.
+function Objects.drawForest(g, salt)
+    local c = config.colors
+    local z = g.z or 0
+    local s = (salt or 1) % 100000
+    local function rnd()
+        s = (s * 1103515245 + 12345) % 2147483648
+        return s / 2147483648
+    end
+
+    -- pick tree positions inside the tile, then sort back-to-front so nearer
+    -- trees overlap the ones behind them (proper little canopy)
+    local trees = {}
+    for k = 1, config.FOREST_DENSITY do
+        local gx = g.gx0 + rnd() * (g.gx1 - g.gx0)
+        local gy = g.gy0 + rnd() * (g.gy1 - g.gy0)
+        trees[k] = { gx, gy, 0.85 + rnd() * 0.5 }
+    end
+    table.sort(trees, function(a, b) return (a[1] + a[2]) < (b[1] + b[2]) end)
+
+    for _, t in ipairs(trees) do
+        local sx, sy = Iso.project(t[1], t[2], z)
+        local sc = t[3]
+        love.graphics.setColor(0, 0, 0, 0.10)
+        love.graphics.ellipse("fill", sx, sy + 2, 9 * sc, 4 * sc)
+        love.graphics.setColor(c.tree_trunk)
+        love.graphics.rectangle("fill", sx - 2 * sc, sy - 12 * sc, 4 * sc, 12 * sc)
+        love.graphics.setColor(c.tree_leaf)
+        love.graphics.circle("fill", sx, sy - 18 * sc, 10 * sc)
+        love.graphics.setColor(c.tree_leaf_hi)
+        love.graphics.circle("fill", sx - 3 * sc, sy - 21 * sc, 6 * sc)
+    end
+end
+
+-- A 1x1 rock cluster (also used as a decorative sea hazard marker).
+function Objects.drawRock(g)
+    local c = config.colors
+    local sx, sy = Iso.project(g.cx, g.cy, g.z or 0)
+    love.graphics.setColor(c.rock_dark)
+    love.graphics.ellipse("fill", sx, sy - 2, 12, 7)
+    love.graphics.setColor(c.rock_light)
+    love.graphics.circle("fill", sx - 3, sy - 5, 7)
+    love.graphics.circle("fill", sx + 5, sy - 3, 5)
+end
+
+-- A small isometric ship (volumetric hull + cabin), oriented by `angle`.
+-- Reused for docked ships in harbors and ambient ships at sea. `scale` ~1.0.
+function Objects.drawShip(gx, gy, angle, color, scale, z)
+    scale = scale or 1
+    z = z or 0
+    local c = config.colors
+    local hull = {
+        { 22,  0 }, { 8, -11 }, { -16, -11 }, { -20, 0 }, { -16, 11 }, { 8, 11 },
+    }
+    local function rot(px, py)
+        local co, si = math.cos(angle), math.sin(angle)
+        return gx + (px * co - py * si) * scale, gy + (px * si + py * co) * scale
+    end
+    local base, deck = {}, {}
+    for _, p in ipairs(hull) do
+        local wx, wy = rot(p[1], p[2])
+        local bx, by = Iso.project(wx, wy, z)
+        local dx, dy = Iso.project(wx, wy, z + 11 * scale)
+        base[#base + 1] = { bx, by }
+        deck[#deck + 1] = { dx, dy }
+    end
+    local sxc, syc = Iso.project(gx, gy, z)
+    love.graphics.setColor(0, 0, 0, 0.14)
+    love.graphics.ellipse("fill", sxc, syc + 3, 22 * scale, 11 * scale)
+
+    love.graphics.setColor(color[1] * 0.7, color[2] * 0.7, color[3] * 0.7)
+    local n = #base
+    for k = 1, n do
+        local a, b = k, (k % n) + 1
+        love.graphics.polygon("fill", deck[a][1], deck[a][2], deck[b][1], deck[b][2],
+            base[b][1], base[b][2], base[a][1], base[a][2])
+    end
+    local poly = {}
+    for k = 1, n do poly[#poly + 1] = deck[k][1]; poly[#poly + 1] = deck[k][2] end
+    love.graphics.setColor(color)
+    love.graphics.polygon("fill", poly)
+    -- cabin
+    local cxs, cys = Iso.project(gx, gy, z + 11 * scale)
+    love.graphics.setColor(c.boat_cabin)
+    love.graphics.rectangle("fill", cxs - 6 * scale, cys - 12 * scale, 12 * scale, 12 * scale, 2, 2)
+end
+
+return Objects
