@@ -4,8 +4,7 @@ A gentle, exploration-focused 2D boat game for young children, built with
 [LÖVE](https://love2d.org) (Love2D) 11.x. Sail between friendly ports, carry
 cargo, earn gold, and discover islands. No combat, no failure, no rush.
 
-> Norwegian on purpose — the target player is a Norwegian-speaking 5-year-old.
-
+Note - for those viewing this, this is a Norwegian language game!
 ---
 
 ## How to run
@@ -132,7 +131,7 @@ The `save/savegame.json` checked into the repo is just an illustrative default.
 
 ## Technical notes
 
-- Targets LÖVE **11.x** (tested on 11.3) and old Macs (High Sierra).
+- Targets LÖVE **11.x** (tested on 11.3)
 - No external dependencies; physics, JSON, and audio are all hand-rolled and
   simple. `joystick` and `box2d physics` modules are disabled in `conf.lua`.
 - Sound effects (coin, horn, delivery, bump), ocean ambience, and a looping

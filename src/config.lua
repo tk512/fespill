@@ -7,7 +7,7 @@ local config = {}
 -- ── Startup ─────────────────────────────────────────────────────────────
 -- Set to true to launch fullscreen (what your child plays with).
 -- Keep false while developing so you get a normal resizable window.
-config.START_FULLSCREEN = false
+config.START_FULLSCREEN = true
 
 -- ── World / rendering ───────────────────────────────────────────────────
 config.WORLD_WIDTH  = 4096   -- size of the sailable ocean (in ground units)
