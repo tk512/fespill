@@ -1,138 +1,83 @@
+> NOTE: This game is in Norwegian, made for my son 🇳🇴
+
 # Båtspillet 🚤
 
-A gentle, exploration-focused 2D boat game for young children, built with
-[LÖVE](https://love2d.org) (Love2D) 11.x. Sail between friendly ports, carry
-cargo, earn gold, and discover islands. No combat, no failure, no rush.
-
-Note - for those viewing this, this is a Norwegian language game!
----
-
-## How to run
-
-You already have LÖVE installed at `/Applications/love.app`. From the project
-folder (`fespill/`, the one containing `main.lua`):
-
-```bash
-/Applications/love.app/Contents/MacOS/love .
-```
-
-Tip — make it short:
-
-```bash
-alias love='/Applications/love.app/Contents/MacOS/love'
-love .            # run the game from the project folder
-```
-
-It starts in a resizable **window** for development. To launch in **fullscreen**
-(what your child plays), open `src/config.lua` and set:
-
-```lua
-config.START_FULLSCREEN = true
-```
-
-You can always toggle fullscreen at runtime with **F11**.
+Et lite båtspill for barn (laget for min egen gutt). 
 
 ---
 
-## Controls
+## Slik starter du spillet
 
-| Input                     | Action                                        |
-|---------------------------|-----------------------------------------------|
-| **Arrow keys / WASD**     | Steer the boat (gentle accel, slow turning)   |
-| **Left click on water**   | Sail to that spot (auto-steer)                |
-| **Right click + drag**    | Look around the map                           |
-| **Mouse wheel**           | Zoom in / out                                 |
-| **C**                     | Re-center the camera on the boat              |
-| **SPACE (MELLOMROM)**     | Load / deliver cargo at a port                |
-| **ESC**                   | Back to menu (saves first) / quit from menu   |
+Enklest: **dobbeltklikk på `Båtspillet.command`** (eksporter i Script Editor så har man en app)
 
-### Developer hotkeys
 
-| Key   | Action                                              |
-|-------|-----------------------------------------------------|
-| **F5**  | Reload the current scene (quick restart)          |
-| **F6**  | Reload data files (`boats.lua`, `ports.lua`)      |
-| **F11** | Toggle fullscreen                                 |
-| **M**   | Mute / unmute audio                               |
+Spillet starter i fullskjerm. Trykk **F11** for å bytte mellom fullskjerm og
+vindu. (Vil du at det skal starte i vindu, sett `START_FULLSCREEN = false` i
+`src/config.lua`.)
 
 ---
 
-## How to play
+## Kontroller
 
-1. From the menu, press **Enter** or click **"Seil ut!"**.
-2. Sail to a port (steer with keys, or click where you want to go).
-3. When close, the HUD says *"Trykk MELLOMROM"* — press **Space** to load cargo.
-4. The cargo shows its destination port. Sail there and press **Space** to
-   deliver it for **gold**.
-5. Sail near the green islands to **discover** them.
-
-Everything is forgiving: the boat never sinks, bounces softly off land, and
-there's no timer or losing.
+| Knapp | Hva den gjør |
+|-------|--------------|
+| **Klikk på vannet** | Båten seiler dit |
+| **Piltaster / WASD** | Styr båten selv |
+| **Mus mot skjermkanten** | Flytt kartet |
+| **Høyreklikk + dra** | Flytt kartet |
+| **Musehjul** | Zoom inn / ut |
+| **C** | Sentrer kameraet på båten |
+| **MELLOMROM** | Last / lever varer i havna |
+| **ESC** | Tilbake til menyen |
 
 ---
 
-## Project layout
+## Slik spiller du
 
-```
-main.lua            love callbacks -> Game
-conf.lua            window / module config (runs before the game)
-src/
-  game.lua          scene manager + state + save/load + dev hotkeys
-  config.lua        ALL tuning numbers and colors (edit gameplay feel here)
-  assets.lua        image loader (with code placeholders) + sound synthesis
-  json.lua          tiny dependency-free JSON for the save file
-  scenes/
-    menu.lua        title screen
-    world.lua       the playable scene (ties everything together)
-  entities/
-    boat.lua        player boat (movement, collision, draw)
-    port.lua        a port (range check, placeholder art)
-    island.lua      scenery + soft obstacle + discoverable landmark
-  systems/
-    iso.lua         2:1 isometric projection math + multi-tile footprints
-    terrain.lua     procedural heightmap world (elevation, slopes, coasts)
-    objects.lua     sprite-object layer: place art on single OR multiple tiles
-    camera.lua      iso follow / drag / zoom camera, screen<->world
-    cargo.lua       the pickup/deliver economy
-  ui/
-    hud.lua         coins, cargo, port prompts, toasts (screen space)
-  data/
-    boats.lua       boat definitions (add boats here, no code changes)
-    ports.lua       port definitions (add ports here, no code changes)
-assets/             drop in PNGs to replace placeholders (see assets/README.md)
-save/savegame.json  illustrative default save (see note below)
-```
+1. Trykk **Enter** eller klikk **«Seil ut!»** i menyen.
+2. Seil til en havn (klikk på vannet, eller bruk piltastene).
+3. Når båten er nær havna, trykk **MELLOMROM** for å laste varer.
+4. Lasten viser hvilken havn den skal til. Seil dit og trykk **MELLOMROM** for
+   å levere – da får du **gull**.
+5. Seil nær øyene for å **oppdage** dem.
 
-## Where saves actually live
+Alt er snilt: båten synker aldri, den dulter mykt borti land, og du kan ikke
+tape.
 
-LÖVE sandboxes file writes. The real save is written to LÖVE's save directory,
-**not** the `save/` folder in this repo:
+---
+
+## Utviklertaster
+
+| Tast | Handling |
+|------|----------|
+| **F5** | Last scenen på nytt (rask omstart) |
+| **F6** | Last datafilene på nytt (`boats.lua`, `ports.lua`) |
+| **F11** | Fullskjerm av/på |
+| **M** | Lyd av/på |
+
+---
+
+## Legge til og endre innhold
+
+- **Ny båt eller havn:** rediger `src/data/boats.lua` eller
+  `src/data/ports.lua`, og trykk **F6** i spillet. Ingen koding nødvendig.
+- **Endre følelsen** (fart, zoom, farger, kart): rediger `src/config.lua`.
+- **Bytte ut grafikken:** legg PNG-filer i `assets/` (se `assets/README.md`).
+  Spillet tegner enkle plassholdere helt til du legger inn ekte bilder.
+
+---
+
+## Lagring
+
+Spillet lagrer automatisk (gull, opplåste båter og oppdagede øyer). Filen ligger
+her – ikke i selve spillmappa:
 
 ```
 ~/Library/Application Support/LOVE/batspillet/savegame.json
 ```
 
-The `save/savegame.json` checked into the repo is just an illustrative default.
-
 ---
 
-## Extending the game
+## Teknisk (kort)
 
-- **New boat or port?** Edit `src/data/boats.lua` / `src/data/ports.lua`, then
-  press **F6** in-game to hot-reload. No code changes needed. Ports auto-snap to
-  the nearest coastline and flatten the ground under themselves.
-- **Reshape the world?** Edit `config.ISLANDS` (island domes), `config.WORLD_SEED`,
-  `HILL_AMP`, `HILL_SCALE`, `COAST`, `MAX_LEVEL` in `src/config.lua`. F6 regenerates.
-- **Change the feel** (speed, zoom, colors, pickup range)? Edit `src/config.lua`.
-- **Add real art?** Drop PNGs into `assets/` — see `assets/README.md` for names
-  (ground tiles, single-tile props, and multi-tile harbor sprites).
-
----
-
-## Technical notes
-
-- Targets LÖVE **11.x** (tested on 11.3)
-- No external dependencies; physics, JSON, and audio are all hand-rolled and
-  simple. `joystick` and `box2d physics` modules are disabled in `conf.lua`.
-- Sound effects (coin, horn, delivery, bump), ocean ambience, and a looping
-  90s-style chiptune are **synthesized at load** — there are no audio files.
+- Laget for LÖVE **11.3**. Fungerer også på gamle Mac-er
