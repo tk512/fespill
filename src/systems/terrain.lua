@@ -142,7 +142,21 @@ function Terrain:snapPorts(ports)
         end
         if sdx == 0 and sdy == 0 then sdy = 1 end
         local mag = math.sqrt(sdx * sdx + sdy * sdy)
-        port:placeAt(i0, j0, cx, cy, 0, sdx / mag, sdy / mag)  -- buildZ = 0 (flat)
+        local ux, uy = sdx / mag, sdy / mag
+        port:placeAt(i0, j0, cx, cy, 0, ux, uy)  -- buildZ = 0 (flat)
+
+        -- Dock point: step out from the harbour centre along the sea direction
+        -- to the FIRST water tile (then a touch further), so the boat has a real
+        -- spot in the water to pull up to. Stored on the port for isBoatInRange.
+        local dockX, dockY = cx + ux * T, cy + uy * T
+        for s = 1, 40 do
+            local gx, gy = cx + ux * T * 0.5 * s, cy + uy * T * 0.5 * s
+            if waterAt(gx, gy) then
+                dockX, dockY = gx + ux * T * 0.6, gy + uy * T * 0.6
+                break
+            end
+        end
+        port.dockX, port.dockY = dockX, dockY
     end
 end
 

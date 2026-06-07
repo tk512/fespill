@@ -174,23 +174,85 @@ local function rot(px, py, a, ox, oy)
     return ox + px * c - py * s, oy + px * s + py * c
 end
 
+-- Which of the 8 ON-SCREEN compass directions is the boat travelling? We take
+-- the ground-plane heading, project it into iso screen space (so +gx actually
+-- reads as down-right, etc.), then snap to the nearest eighth. Sectors are
+-- ordered by screen angle (atan2, y points DOWN on screen): 0=e, then se, s …
+local DIR_ORDER = { "e", "se", "s", "sw", "w", "nw", "n", "ne" }
+local function screenDirKey(angle)
+    local vgx, vgy = math.cos(angle), math.sin(angle)
+    local vsx = (vgx - vgy) * Iso.SX
+    local vsy = (vgx + vgy) * Iso.SY
+    local a = math.atan2(vsy, vsx)
+    local k = math.floor(a / (math.pi / 4) + 0.5)
+    k = ((k % 8) + 8) % 8
+    return DIR_ORDER[k + 1], vsx
+end
+
+-- Resolve a screen direction to (image, flip). Diagonals/verticals use their
+-- own PNG if present (assets/boats/<base>_<dir>.png); otherwise diagonals
+-- mirror their opposite-side twin, and anything still missing falls back to the
+-- plain side view — so the boat always draws, with whatever art exists.
+function Boat:dirSprite(base, sprite, dir, vsx)
+    local function img(name) return Assets.image("boats/" .. name) end
+    local function side()  -- left/right fallback, chosen by screen direction
+        if vsx >= 0 then return (img(base .. "_e.png") or img(sprite)), 1 end
+        local l = img(base .. "_w.png") or img(base .. "_left.png")
+        if l then return l, 1 end
+        return (img(base .. "_e.png") or img(sprite)), -1   -- mirror right as left
+    end
+
+    if dir == "e" then
+        return (img(base .. "_e.png") or img(sprite)), 1
+    elseif dir == "w" then
+        local l = img(base .. "_w.png") or img(base .. "_left.png")
+        if l then return l, 1 end
+        return (img(base .. "_e.png") or img(sprite)), -1
+    elseif dir == "ne" then
+        local i = img(base .. "_ne.png"); if i then return i, 1 end
+        return side()
+    elseif dir == "se" then
+        local i = img(base .. "_se.png"); if i then return i, 1 end
+        return side()
+    elseif dir == "nw" then
+        local i = img(base .. "_nw.png"); if i then return i, 1 end
+        local r = img(base .. "_ne.png"); if r then return r, -1 end   -- mirror NE
+        return side()
+    elseif dir == "sw" then
+        local i = img(base .. "_sw.png"); if i then return i, 1 end
+        local r = img(base .. "_se.png"); if r then return r, -1 end   -- mirror SE
+        return side()
+    elseif dir == "n" then
+        local i = img(base .. "_n.png"); if i then return i, 1 end
+        return side()
+    elseif dir == "s" then
+        local i = img(base .. "_s.png"); if i then return i, 1 end
+        return side()
+    end
+    return side()
+end
+
 function Boat:draw()
-    -- If a PNG is provided, draw it as a big SIDE-PROFILE billboard: long and
-    -- low (a kid's boat drawing), spanning a couple of tiles, anchored on the
-    -- water and flipped horizontally to face the way it's heading. (One angle
-    -- for now; left/right/forward frames can come later.)
-    local sprite = self.def.sprite and Assets.image("boats/" .. self.def.sprite)
-    if sprite then
+    -- Big billboard anchored on the water. Picks the photo that matches the way
+    -- the boat is heading ON SCREEN (8 directions), with diagonals mirrored and
+    -- a graceful fall back to the left/right side views when art is missing.
+    local rightImg = self.def.sprite and Assets.image("boats/" .. self.def.sprite)
+    if rightImg then
+        local base = self.def.sprite:gsub("%.png$", "")
+        local dir, vsx = screenDirKey(self.angle)
+        local img, flip = self:dirSprite(base, self.def.sprite, dir, vsx)
+        if type(flip) ~= "number" then flip = 1 end
+        img = img or rightImg
+
         local sx, sy = Iso.project(self.x, self.y, 0)
         local want = (self.def.spriteWidth or config.BOAT_SPRITE_WIDTH)
-        local scale = want / sprite:getWidth()
-        local flip = (math.cos(self.angle) < 0) and -1 or 1   -- face travel dir
+        local scale = want / img:getWidth()
         -- soft shadow on the water
         love.graphics.setColor(0, 0, 0, 0.16)
         love.graphics.ellipse("fill", sx, sy + 2, want * 0.45, want * 0.16)
         love.graphics.setColor(1, 1, 1)
-        love.graphics.draw(sprite, sx, sy, 0, scale * flip, scale,
-            sprite:getWidth() / 2, sprite:getHeight() * 0.82)
+        love.graphics.draw(img, sx, sy, 0, scale * flip, scale,
+            img:getWidth() / 2, img:getHeight() * 0.85)
         return
     end
     self:drawVolumetric()

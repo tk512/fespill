@@ -19,6 +19,7 @@ local CargoSystem  = require("src.systems.cargo")
 local Boat         = require("src.entities.boat")
 local Port         = require("src.entities.port")
 local HUD          = require("src.ui.hud")
+local PortScreen   = require("src.ui.portscreen")
 
 local World = {}
 
@@ -77,6 +78,8 @@ function World:load(game)
 
     self.camera:snapTo(self.boat.x, self.boat.y)
     self.nearPort = nil
+    self.dock = nil          -- the docking screen overlay, when open
+    self.dockSuppress = nil  -- port id we just left a dock for (don't re-pop)
     self.items = {}  -- reused render list (sorted each frame)
 end
 
@@ -119,6 +122,9 @@ function World:spawnAmbientShips()
 end
 
 function World:update(dt)
+    -- While the docking screen is up, the world is frozen.
+    if self.dock then self.dock:update(dt); return end
+
     self.terrain:update(dt)
     self.boat:update(dt)
     self.boat:blockLand(self.terrain)   -- keep the boat on the water
@@ -130,6 +136,17 @@ function World:update(dt)
     self.nearPort = nil
     for _, port in ipairs(self.ports) do
         if port:isBoatInRange(self.boat) then self.nearPort = port; break end
+    end
+
+    -- Auto-dock: sailing up to a port pops the docking screen (no key needed).
+    -- Debounced so it only opens once per arrival — sail away and back to redo.
+    if self.nearPort then
+        if self.nearPort.id ~= self.dockSuppress then
+            self:openDock(self.nearPort)
+            return
+        end
+    else
+        self.dockSuppress = nil  -- left all ports; allow docking again
     end
 
     self.camera:edgeScroll(dt)   -- push mouse to screen edge to scroll
@@ -160,25 +177,28 @@ function World:isDiscovered(id)
     return false
 end
 
--- Load + deliver in a single press: deliver anything bound here, then top up.
-function World:interact()
-    if not self.nearPort then return end
-    local port = self.nearPort
+-- Dock at a port and pop the docking screen. Decides what the screen shows:
+--   deliver  — we're carrying passengers/goods bound for this town (gold!)
+--   offer    — this town has a job and the boat has room
+--   visit    — nothing to do right now (friendly hello)
+function World:openDock(port)
+    self.boat:clearDestination()   -- stop nudging while we're parked
+
     local earned, delivered = self.cargoSystem:tryDeliver(self.boat, port)
-
-    local offer
-    if self.boat:hasRoom() then
-        offer = self.cargoSystem:tryPickup(self.boat, port)
-    end
-
+    local mode, offer
     if delivered > 0 then
         self.game:addCoins(earned)
-        self:showToast("+" .. earned .. " gull!")
         Assets.playSfx("deliver")
-    elseif offer then
-        self:showToast("Lastet " .. offer.type .. "!")
-        Assets.playSfx("horn")
+        mode = "deliver"
+    else
+        offer = self.cargoSystem:offerAt(port.id)
+        mode = (offer and self.boat:hasRoom()) and "offer" or "visit"
     end
+
+    self.dock = PortScreen.new(self, port, {
+        mode = mode, offer = offer, earned = earned, delivered = delivered,
+    })
+    self.dockSuppress = port.id    -- don't immediately re-pop while still in range
 end
 
 function World:showToast(text)
@@ -194,6 +214,8 @@ function World:draw()
     self.camera:detach()
 
     HUD.draw(self)
+
+    if self.dock then self.dock:draw() end   -- docking modal on top of everything
 end
 
 local function byDepth(a, b)
@@ -253,15 +275,18 @@ function World:drawDestinationMarker()
 end
 
 -- ── Input ────────────────────────────────────────────────────────────────
+-- While docked, all input goes to the docking screen.
 function World:keypressed(key)
+    if self.dock then self.dock:keypressed(key); return end
     if key == "space" then
-        self:interact()
+        if self.nearPort then self:openDock(self.nearPort) end  -- manual dock too
     elseif key == "c" then
         self.camera:centerOn(self.boat.x, self.boat.y)  -- recenter on the boat
     end
 end
 
 function World:mousepressed(x, y, button)
+    if self.dock then self.dock:mousepressed(x, y, button); return end
     if button == 1 then
         local wx, wy = self.camera:screenToWorld(x, y)
         self.boat:setDestination(wx, wy)
@@ -271,16 +296,19 @@ function World:mousepressed(x, y, button)
 end
 
 function World:mousereleased(x, y, button)
+    if self.dock then return end
     if button == 2 then
         self.panning = false
     end
 end
 
 function World:mousemoved(x, y, dx, dy)
+    if self.dock then return end
     if self.panning then self.camera:drag(dx, dy) end
 end
 
 function World:wheelmoved(dx, dy)
+    if self.dock then return end
     self.camera:zoomBy(dy * 0.1)
 end
 

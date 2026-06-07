@@ -46,8 +46,19 @@ end
 
 function Port:update(dt) self.bob = self.bob + dt end
 
+-- The spot the boat actually pulls up to: out in the WATER in front of the
+-- harbour (the port building itself sits on land, which the boat can't reach).
+-- seaDx/seaDy is the unit direction toward open water; push out past the
+-- flattened footprint so the point lands on sailable water.
+function Port:dockPoint()
+    if self.dockX then return self.dockX, self.dockY end   -- set by terrain (shoreline water)
+    local d = Port.FOOTPRINT * config.TILE * 0.5 + 40       -- fallback
+    return self.x + self.seaDx * d, self.y + self.seaDy * d
+end
+
 function Port:isBoatInRange(boat)
-    local dx, dy = boat.x - self.x, boat.y - self.y
+    local dpx, dpy = self:dockPoint()
+    local dx, dy = boat.x - dpx, boat.y - dpy
     return (dx * dx + dy * dy) <= (config.PICKUP_RADIUS * config.PICKUP_RADIUS)
 end
 

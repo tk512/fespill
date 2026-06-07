@@ -29,14 +29,26 @@ function CargoSystem:makeOffer(port)
         dest = self.ports[love.math.random(#self.ports)]
     until dest.id ~= port.id
 
-    local reward = love.math.random(10, 25)
+    -- What this town sends. `produces` is preferred; fall back to old `cargo`.
+    local prod = port.def.produces
+    if not prod then
+        local c = port.def.cargo or { label = "Last", icon = "box" }
+        prod = { mode = "cargo", label = c.label, icon = c.icon }
+    end
+
+    local count = (prod.mode == "passengers") and love.math.random(1, 4)
+                                              or  love.math.random(1, 3)
+    local reward = count * love.math.random(6, 12)
+
     return {
-        type   = port.def.cargo.label,
-        icon   = port.def.cargo.icon,
+        mode   = prod.mode,            -- "passengers" | "cargo"
+        type   = prod.label,           -- shown in HUD / screen
+        icon   = prod.icon,            -- passenger / fish / apple / flower / box
+        count  = count,
         fromId = port.id,
         toId   = dest.id,
         toName = dest.name,
-        color  = port.color,
+        color  = dest.color,           -- destination's accent color (for the flag)
         reward = reward,
     }
 end

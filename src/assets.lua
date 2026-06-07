@@ -60,6 +60,22 @@ function Assets.imageGroundY(path)
     return groundCache[path]
 end
 
+-- Town photo for the docking screen: assets/ports/photos/<id>.png (or nil so
+-- the screen draws a procedural postcard instead). Cached after first lookup.
+local photoCache = {}
+function Assets.portPhoto(id)
+    if photoCache[id] == nil then
+        local full = "assets/ports/photos/" .. id .. ".png"
+        if love.filesystem.getInfo(full) then
+            local ok, img = pcall(love.graphics.newImage, full)
+            photoCache[id] = ok and img or false
+        else
+            photoCache[id] = false
+        end
+    end
+    return photoCache[id] or nil
+end
+
 -- ── Sound synthesis ────────────────────────────────────────────────────────
 local RATE = 22050 -- low sample rate on purpose: small + lo-fi 90s feel
 
@@ -118,6 +134,24 @@ local function makeSounds()
     Assets.sounds.bump = love.audio.newSource(render(0.15, function(t)
         return 0.35 * math.sin(TAU * 120 * t) * env(t, 0.15, 0.002, 0.1)
     end), "static")
+
+    -- Wave crash: a swelling "whoosh" of filtered noise that breaks into foam
+    -- and recedes, with a low boom underneath. Played after the welcome voice.
+    local prev = 0
+    local seed = 99173
+    local function rnd()                       -- deterministic noise (no Math.random)
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        return (seed / 2147483648) * 2 - 1
+    end
+    Assets.sounds.wave_crash = love.audio.newSource(render(1.5, function(t)
+        local raw = rnd()
+        prev = prev * 0.85 + raw * 0.15        -- low-pass -> "shhhh" of water
+        local amp
+        if t < 0.35 then amp = (t / 0.35) ^ 2  -- swell up to the crash...
+        else amp = math.max(0, 1 - (t - 0.35) / 1.15) end  -- ...then recede
+        local boom = 0.4 * math.sin(TAU * 70 * t) * math.max(0, 1 - t / 0.6)
+        return (prev * 2.0 + boom) * amp
+    end), "static")
 end
 
 -- Ambient ocean: a long, quietly looping bed of filtered noise that swells
@@ -174,11 +208,60 @@ local function makeMusic()
     Assets.music:setVolume(config.MUSIC_VOLUME)
 end
 
+-- Voice clip(s): real recorded audio files (e.g. my kid saying the welcome).
+-- Loaded from assets/ if present; missing files just mean no voice (no crash).
+Assets.voice = {}  -- name -> Source ("static")
+
+local function makeVoice()
+    -- name -> filename under assets/
+    local clips = { velkommen = "velkommen.ogg" }
+    for name, file in pairs(clips) do
+        local full = "assets/" .. file
+        if love.filesystem.getInfo(full) then
+            Assets.voice[name] = love.audio.newSource(full, "static")
+        end
+    end
+end
+
 -- ── Public audio API ───────────────────────────────────────────────────────
 function Assets.loadSounds()
     pcall(makeSounds)
     pcall(makeAmbience)
     pcall(makeMusic)
+    pcall(makeVoice)
+end
+
+-- Play a recorded voice clip once. Rewinds first so repeat triggers work.
+function Assets.playVoice(name)
+    if not config.AUDIO_ON then return end
+    local src = Assets.voice[name]
+    if not src then return end
+    src:stop()
+    src:setVolume(1.0)        -- voice should be clearly audible over the music
+    src:play()
+end
+
+-- Play an on-demand voice file from assets/voice/<name>.ogg if it exists.
+-- Used by the docking screen for per-town instruction clips you add later.
+-- Returns true if a clip was actually played, false if no file is present.
+local namedVoiceCache = {}
+function Assets.playNamedVoice(name)
+    if not config.AUDIO_ON then return false end
+    if namedVoiceCache[name] == nil then
+        local full = "assets/voice/" .. name .. ".ogg"
+        if love.filesystem.getInfo(full) then
+            local ok, src = pcall(love.audio.newSource, full, "static")
+            namedVoiceCache[name] = ok and src or false
+        else
+            namedVoiceCache[name] = false
+        end
+    end
+    local src = namedVoiceCache[name]
+    if not src then return false end
+    src:stop()
+    src:setVolume(1.0)
+    src:play()
+    return true
 end
 
 -- Play a one-shot effect. Clones the source so overlapping plays work.
@@ -200,6 +283,13 @@ function Assets.startMusic()
     if Assets.sounds.ambience and not Assets.sounds.ambience:isPlaying() then
         Assets.sounds.ambience:play()
     end
+end
+
+-- Temporarily scale the music + ambience volume (e.g. duck them while the
+-- welcome voice is speaking, then restore with scale = 1.0).
+function Assets.setMusicVolume(scale)
+    if Assets.music then Assets.music:setVolume(config.MUSIC_VOLUME * scale) end
+    if Assets.sounds.ambience then Assets.sounds.ambience:setVolume(0.5 * scale) end
 end
 
 function Assets.stopMusic()
