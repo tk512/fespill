@@ -51,9 +51,10 @@ function Terrain.new(ports)
     self:snapPorts(ports)        -- place ports on the coast + mark their pads
     self:classifyTiles()         -- water / sand / grass / rock per tile
     self:scatterProps()
+    self:buildCoastMesh()        -- bake the jagged shoreline into one static mesh
 
     for i, isl in ipairs(config.ISLANDS) do
-        self.islandCenters[i] = { x = isl.x, y = isl.y, id = "island" .. i }
+        self.islandCenters[i] = { x = isl.x, y = isl.y, radius = isl.radius, id = "island" .. i }
     end
     return self
 end
@@ -97,7 +98,7 @@ function Terrain:snapPorts(ports)
         local startI = math.max(2, math.min(self.nx - 5, math.floor(port.x / T)))
         local startJ = math.max(2, math.min(self.ny - 5, math.floor(port.y / T)))
         local best, bestD
-        for r = 0, 34 do
+        for r = 0, 60 do   -- wide search: islands are large, ports start inland
             for di = -r, r do
                 for dj = -r, r do
                     if math.abs(di) == r or math.abs(dj) == r then
@@ -255,26 +256,98 @@ function Terrain:tileDepth(i, j)
 end
 
 -- ── drawing ─────────────────────────────────────────────────────────────────
+-- Draw a tile PNG (flat, centred, fit to TILE). Returns false if not present.
+function Terrain:drawSprite(ttype, i, j)
+    local img = Assets.image("tiles/" .. ttype .. ".png")
+    if not img then return false end
+    local T = config.TILE
+    local sx, sy = Iso.project((i - 0.5) * T, (j - 0.5) * T, 0)
+    local scale = T / img:getWidth()
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.draw(img, sx, sy, 0, scale, scale, img:getWidth() / 2, img:getHeight() / 2)
+    return true
+end
+
 function Terrain:drawTile(i, j)
     local tile = self.tiles[i][j]
-    -- Sprite tile from a pack, if present (drawn flat, centered, fit to TILE).
-    local img = Assets.image("tiles/" .. tile.type .. ".png")
-    if img then
-        local T = config.TILE
-        local sx, sy = Iso.project((i - 0.5) * T, (j - 0.5) * T, 0)
-        local scale = T / img:getWidth()
-        love.graphics.setColor(1, 1, 1)
-        love.graphics.draw(img, sx, sy, 0, scale, scale,
-            img:getWidth() / 2, img:getHeight() / 2)
-        return
-    end
-    -- code fallback
     if tile.water then
-        self:drawWater(i, j, tile)
+        if not self:drawSprite("water", i, j) then self:drawWater(i, j, tile) end
     elseif tile.land < 4 then
-        self:drawCoast(i, j, tile)
+        -- coastal: draw only the water base here. The jagged pixel land edge is
+        -- baked once into self.coastMesh (drawn in one call by the world), so we
+        -- don't redraw hundreds of little polygons every frame.
+        if not self:drawSprite("water", i, j) then self:drawWater(i, j, tile) end
     else
-        self:drawLandFull(i, j, tile)
+        if not self:drawSprite(tile.type, i, j) then self:drawLandFull(i, j, tile) end
+    end
+end
+
+-- Bake the whole jagged, pixelized shoreline into ONE static mesh (built once at
+-- load). Each coastal tile is split into COAST_PIXELS² sub-cells; land/wet-sand/
+-- foam cells become little iso-diamond quads with baked colours. Land vs water
+-- per sub-cell = bilinear of the 4 tile corners + world-space noise, so the coast
+-- frays irregularly and joins seamlessly tile-to-tile. Drawing it is then a
+-- single GPU call per frame instead of thousands of polygon() calls.
+function Terrain:buildCoastMesh()
+    local T = config.TILE
+    local N = config.COAST_PIXELS
+    local sub = T / N
+    local jag = config.COAST_JAGGED
+    local seed = config.WORLD_SEED
+    local foam = config.colors.foam
+    local v = {}
+
+    local function quad(gx, gy, r, g, b, a)
+        local x1, y1 = Iso.project(gx, gy, 0)
+        local x2, y2 = Iso.project(gx + sub, gy, 0)
+        local x3, y3 = Iso.project(gx + sub, gy + sub, 0)
+        local x4, y4 = Iso.project(gx, gy + sub, 0)
+        v[#v + 1] = { x1, y1, 0, 0, r, g, b, a }
+        v[#v + 1] = { x2, y2, 0, 0, r, g, b, a }
+        v[#v + 1] = { x3, y3, 0, 0, r, g, b, a }
+        v[#v + 1] = { x1, y1, 0, 0, r, g, b, a }
+        v[#v + 1] = { x3, y3, 0, 0, r, g, b, a }
+        v[#v + 1] = { x4, y4, 0, 0, r, g, b, a }
+    end
+
+    for i = 1, self.nx do
+        for j = 1, self.ny do
+            local tile = self.tiles[i][j]
+            if (not tile.water) and tile.land < 4 then
+                local x0, y0 = (i - 1) * T, (j - 1) * T
+                local lu = self.corner[i][j]
+                local ru = self.corner[i + 1][j]
+                local rd = self.corner[i + 1][j + 1]
+                local ld = self.corner[i][j + 1]
+                local fac = config.colors[tile.type] or config.colors.sand
+                for a = 0, N - 1 do
+                    for b = 0, N - 1 do
+                        local u, vv = (a + 0.5) / N, (b + 0.5) / N
+                        local top = lu + (ru - lu) * u
+                        local bot = ld + (rd - ld) * u
+                        local val = top + (bot - top) * vv
+                        local gx, gy = x0 + (a + 0.5) * sub, y0 + (b + 0.5) * sub
+                        val = val + (fbm(gx / 90, gy / 90, seed) - 0.5) * jag
+                        if val > 0.5 then
+                            if val < 0.58 then                  -- wet sand at the edge
+                                quad(x0 + a * sub, y0 + b * sub, fac.lip[1], fac.lip[2], fac.lip[3], 1)
+                            else
+                                local tint = 0.9 + 0.2 * fbm(gx / 35, gy / 35, seed + 7)
+                                quad(x0 + a * sub, y0 + b * sub,
+                                    fac.top[1] * tint, fac.top[2] * tint, fac.top[3] * tint, 1)
+                            end
+                        elseif val > 0.43 then                  -- foam/surf off the beach
+                            local aF = (val - 0.43) / 0.07
+                            quad(x0 + a * sub, y0 + b * sub, foam[1], foam[2], foam[3], 0.55 * aF)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if #v > 0 then
+        self.coastMesh = love.graphics.newMesh(v, "triangles", "static")
     end
 end
 
@@ -309,36 +382,6 @@ function Terrain:drawLandFull(i, j, tile)
     love.graphics.setColor(faces.top[1] * tint, faces.top[2] * tint, faces.top[3] * tint)
     love.graphics.polygon("fill", ax, ay, bx, by, cx, cy, dx, dy)
     self:drawTexture(x0, y0, x1, y1, tile.type, i * 131 + j * 977)
-end
-
--- Curvy coastline tile (marching squares), flat at sea level.
-function Terrain:drawCoast(i, j, tile)
-    local c = config.colors
-    local ax, ay, bx, by, cx, cy, dx, dy, x0, y0, x1, y1 = diamond(i, j)
-    love.graphics.setColor(c.water_top)
-    love.graphics.polygon("fill", ax, ay, bx, by, cx, cy, dx, dy)
-
-    local cs = {
-        { x0, y0, self.corner[i][j] },
-        { x1, y0, self.corner[i + 1][j] },
-        { x1, y1, self.corner[i + 1][j + 1] },
-        { x0, y1, self.corner[i][j + 1] },
-    }
-    local poly = {}
-    for k = 1, 4 do
-        local a = cs[k]; local b = cs[(k % 4) + 1]
-        if a[3] > 0 then
-            local px, py = Iso.project(a[1], a[2], 0); poly[#poly + 1] = px; poly[#poly + 1] = py
-        end
-        if (a[3] > 0) ~= (b[3] > 0) then
-            local px, py = Iso.project((a[1] + b[1]) / 2, (a[2] + b[2]) / 2, 0)
-            poly[#poly + 1] = px; poly[#poly + 1] = py
-        end
-    end
-    if #poly >= 6 then
-        love.graphics.setColor(c.sand.top)
-        love.graphics.polygon("fill", poly)
-    end
 end
 
 -- pixel-art texture inside a flat tile (deterministic)

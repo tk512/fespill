@@ -42,17 +42,20 @@ function Objects:add(obj)
     return obj
 end
 
--- Push render items for every object whose footprint touches the visible tile
--- range. `emit(depth, object)` is called for each; world.lua merges these with
--- terrain tiles and the boat into one sorted pass.
-function Objects:collectVisible(i0, j0, i1, j1, emit)
+-- Append every object whose footprint touches the visible tile range to `out`
+-- (a reusable list — no per-frame closure/garbage). Returns the new length.
+-- world.lua merges these with terrain tiles and the boat into one sorted pass.
+function Objects:collectVisible(i0, j0, i1, j1, out)
+    local n = #out
     for _, obj in ipairs(self.list) do
         local ox0, oy0 = obj.tx, obj.ty
         local ox1, oy1 = obj.tx + obj.w - 1, obj.ty + obj.h - 1
         if ox1 >= i0 and ox0 <= i1 and oy1 >= j0 and oy0 <= j1 then
-            emit(obj.depth, obj)
+            n = n + 1
+            out[n] = obj
         end
     end
+    return n
 end
 
 -- Draw one object: PNG if present, otherwise its placeholder. Called with the

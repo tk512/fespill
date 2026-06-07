@@ -20,7 +20,9 @@ function love.conf(t)
     t.window.vsync      = 1            -- smooth + easy on old GPUs
     t.window.minwidth   = 640
     t.window.minheight  = 480
-    t.window.highdpi    = true         -- crisp on Retina Macs
+    -- Always false: on a non-Retina Mac (e.g. a 2009 iMac) it does nothing, and
+    -- on a Retina/4K Mac it avoids pushing 4x the pixels, keeping motion smooth.
+    t.window.highdpi    = false
 
     -- Disable modules we do not use. Smaller footprint = friendlier to old Macs.
     t.modules.joystick = false

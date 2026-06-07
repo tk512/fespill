@@ -119,6 +119,7 @@ function Game:loadSave()
             self.state.coins = data.coins or self.state.coins
             self.state.unlockedBoats = data.unlockedBoats or self.state.unlockedBoats
             self.state.discoveredIslands = data.discoveredIslands or self.state.discoveredIslands
+            self.state.fog = data.fog or self.state.fog   -- explored map (fog of war)
         end
     end
 end

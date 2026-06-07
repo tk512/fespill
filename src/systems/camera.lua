@@ -87,6 +87,16 @@ function Camera:detach()
     love.graphics.pop()
 end
 
+-- Ground coordinate -> screen pixel (matches attach()'s transform, incl. the
+-- pixel snap). Used for on-screen UI hints like the mission pointer.
+function Camera:worldToScreen(gx, gy)
+    local cx, cy = Iso.project(self.gx, self.gy)
+    local ox = math.floor(love.graphics.getWidth()  / 2 - cx * self.zoom + 0.5)
+    local oy = math.floor(love.graphics.getHeight() / 2 - cy * self.zoom + 0.5)
+    local ix, iy = Iso.project(gx, gy, 0)
+    return ix * self.zoom + ox, iy * self.zoom + oy
+end
+
 -- Screen pixel -> ground coordinate (assumes the click is on the water).
 function Camera:screenToWorld(sx, sy)
     local cx, cy = Iso.project(self.gx, self.gy)

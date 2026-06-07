@@ -10,8 +10,8 @@ local config = {}
 config.START_FULLSCREEN = true
 
 -- ── World / rendering ───────────────────────────────────────────────────
-config.WORLD_WIDTH  = 4096   -- size of the sailable ocean (in ground units)
-config.WORLD_HEIGHT = 2816
+config.WORLD_WIDTH  = 12000  -- size of the sailable ocean (in ground units)
+config.WORLD_HEIGHT = 8000   -- BIG: lots of open sea to explore between islands
 
 -- Isometric tile grid. The ground is a FLAT 2:1 iso tile map (water/sand/
 -- grass/rock) with curvy coastlines, designed to take a CC0 pixel tileset
@@ -32,17 +32,45 @@ config.COAST_NOISE  = 0.22   -- how much the noise frays the coastline
 config.COVER_SCALE  = 720    -- scale of grass-vs-rock land cover patches
 config.ROCK_THRESH  = 0.62   -- cover noise above this becomes rocky ground
 
+-- Coastline detail: a coastal tile is filled with this many sub-pixels per side
+-- (so the land/water edge is a jagged, noisy PIXEL line rather than one big
+-- diamond block). Higher = finer/smoother but more to draw. 4–6 looks retro.
+config.COAST_PIXELS = 10     -- higher = finer SVGA-ish coast (more to draw)
+config.COAST_JAGGED = 0.6    -- how much noise frays the pixel shoreline (0 = clean steps)
+
 -- Forests: thick woodland that covers contiguous regions of tiles.
 config.FOREST_SCALE   = 360    -- bigger = larger forests
 config.FOREST_THRESH  = 0.54   -- lower = more / bigger forests
 config.FOREST_DENSITY = 6      -- trees drawn per forest tile (thick)
 
--- Island masks define where the land is and how big each island is.
+-- Island masks define where the land is and how big each island is. These are
+-- MASSIVE and spread far apart so there's real open ocean to explore between
+-- them. Each one roughly hosts the matching port/city in src/data/ports.lua.
 config.ISLANDS = {
-    { x = 1150, y = 1000, radius = 1050 },
-    { x = 3050, y = 1950, radius = 1120 },
-    { x = 2750, y = 750,  radius = 760  },
-    { x = 600,  y = 2100, radius = 700  },
+    { x = 2600, y = 2600, radius = 1800 },  -- Bergen   (huge, NW)
+    { x = 6200, y = 2200, radius = 1100 },  -- Alversund (N-mid)
+    { x = 9600, y = 2600, radius = 1400 },  -- Florø    (NE)
+    { x = 7800, y = 4400, radius = 900  },  -- Hjellestad (center-E)
+    { x = 2600, y = 6000, radius = 1300 },  -- Lerøy    (SW)
+    { x = 5200, y = 6200, radius = 750  },  -- Klokkarvik (tiny, S-mid)
+    { x = 10000,y = 6200, radius = 1800 },  -- Oslo     (huge, SE)
+}
+
+-- ── Fog of war (exploration) ───────────────────────────────────────────────
+-- The world starts as dark "unknown" zones. As the boat sails, the area around
+-- it is revealed for good (saved), so discovering the map is a surprise. A
+-- bigger boat (future) can carry a brighter lantern = larger reveal radius.
+config.FOG_CELL        = 256   -- reveal granularity in ground units (4 tiles)
+config.FOG_REVEAL      = 760   -- how far around the boat gets lit up
+
+-- ── Cities (buildings drawn around a port to show its size) ────────────────
+-- Each port in ports.lua has a `size`; these map size -> how many houses to
+-- scatter around the harbour and how far out they spread (in tiles).
+config.CITY_SIZES = {
+    tiny   = { houses = 4,  spread = 4  },
+    small  = { houses = 9,  spread = 6  },
+    medium = { houses = 18, spread = 9  },
+    large  = { houses = 40, spread = 15 },
 }
 
 config.CAMERA_MIN_ZOOM = 0.55   -- furthest out (wheel down) — wide overview
@@ -71,6 +99,7 @@ config.colors = {
     water_top    = {0.31, 0.49, 0.60},  -- shallow / near land (muted teal-blue)
     water_deep   = {0.21, 0.37, 0.50},  -- open sea
     wave         = {0.52, 0.64, 0.70},  -- soft, not white
+    foam         = {0.86, 0.90, 0.89},  -- surf at the waterline
 
     sand  = { top = {0.76, 0.69, 0.49}, lip = {0.60, 0.53, 0.36}, dot = {0.70, 0.63, 0.44} },
     grass = { top = {0.49, 0.55, 0.31}, lip = {0.36, 0.42, 0.22}, dot = {0.44, 0.50, 0.27} },

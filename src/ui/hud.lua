@@ -51,6 +51,11 @@ function HUD.draw(world)
     local hint = "Klikk = seil dit   •   Mus mot kanten = flytt kart   •   C = midtstill   •   MELLOMROM = last/lever   •   ESC = meny"
     love.graphics.print(hint, 16, sh - 26)
 
+    -- ── Top-center: current mission banner (so it's clear we're ON a job) ──
+    if world.boat.cargo[1] then
+        HUD.drawMission(world, sw, sh, c, fonts)
+    end
+
     -- ── Bottom-center: contextual port prompt ───────────────────────────
     if world.nearPort then
         HUD.drawPortPrompt(world, sw, sh, c, fonts)
@@ -60,6 +65,52 @@ function HUD.draw(world)
     if world.toast and world.toast.timer > 0 then
         HUD.drawToast(world, sw, sh, c, fonts)
     end
+
+    love.graphics.setColor(1, 1, 1)
+end
+
+-- A small icon for a mission (passenger / fish / generic), drawn at (x,y).
+local function missionIcon(kind, x, y, s)
+    if kind == "passenger" then
+        love.graphics.setColor(0.95, 0.80, 0.55)
+        love.graphics.rectangle("fill", x - s * 0.22, y - s * 0.5, s * 0.44, s * 0.4)
+        love.graphics.setColor(0.30, 0.45, 0.70)
+        love.graphics.rectangle("fill", x - s * 0.38, y - s * 0.08, s * 0.76, s * 0.5)
+    elseif kind == "fish" then
+        love.graphics.setColor(0.55, 0.68, 0.82)
+        love.graphics.rectangle("fill", x - s * 0.42, y - s * 0.2, s * 0.66, s * 0.4)
+        love.graphics.polygon("fill", x + s * 0.24, y, x + s * 0.46, y - s * 0.26, x + s * 0.46, y + s * 0.26)
+    else
+        love.graphics.setColor(0.60, 0.45, 0.28)
+        love.graphics.rectangle("fill", x - s * 0.36, y - s * 0.36, s * 0.72, s * 0.72)
+    end
+end
+
+-- Top-center banner: "Oppdrag: N <icon> → <BY>" with the town's flag colour.
+function HUD.drawMission(world, sw, sh, c, fonts)
+    local m = world.boat.cargo[1]
+    love.graphics.setFont(fonts.normal)
+    local dest = m.toName
+    local w = 320 + fonts.normal:getWidth(dest)
+    local x, y = sw / 2 - w / 2, 16
+    panel(x, y, w, 56)
+
+    love.graphics.setColor(c.gold)
+    love.graphics.print("Oppdrag:", x + 16, y + 14)
+    local ix = x + 16 + fonts.normal:getWidth("Oppdrag:") + 28
+
+    -- count + icon
+    love.graphics.setColor(c.text)
+    love.graphics.print("x" .. m.count, ix - 22, y + 14)
+    missionIcon(m.icon, ix + 18, y + 28, 26)
+
+    -- arrow + destination flag + name in its town colour
+    love.graphics.setColor(c.text)
+    love.graphics.print("→", ix + 40, y + 14)
+    local nx = ix + 40 + fonts.normal:getWidth("→ ")
+    love.graphics.setColor(m.color or c.text)
+    love.graphics.rectangle("fill", nx, y + 16, 16, 22)
+    love.graphics.print(dest, nx + 24, y + 14)
 
     love.graphics.setColor(1, 1, 1)
 end

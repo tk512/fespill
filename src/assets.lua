@@ -60,6 +60,22 @@ function Assets.imageGroundY(path)
     return groundCache[path]
 end
 
+-- Harbor-master portrait for the docking screen: assets/ports/portraits/<id>.png
+-- (or nil so the screen draws a pixel-art placeholder). Cached after first lookup.
+local portraitCache = {}
+function Assets.portPortrait(id)
+    if portraitCache[id] == nil then
+        local full = "assets/ports/portraits/" .. id .. ".png"
+        if love.filesystem.getInfo(full) then
+            local ok, img = pcall(love.graphics.newImage, full)
+            portraitCache[id] = ok and img or false
+        else
+            portraitCache[id] = false
+        end
+    end
+    return portraitCache[id] or nil
+end
+
 -- Town photo for the docking screen: assets/ports/photos/<id>.png (or nil so
 -- the screen draws a procedural postcard instead). Cached after first lookup.
 local photoCache = {}
@@ -223,12 +239,51 @@ local function makeVoice()
     end
 end
 
+-- Harbor "mood" themes that loop while the docking screen is open: a warm,
+-- cosy arpeggio for friendly ports and a low, threatening drone for scary ones.
+local function makeDockMoods()
+    Assets.sounds.dock_cosy = love.audio.newSource(render(4.0, function(t)
+        local chord = { 261.6, 329.6, 392.0, 329.6 }   -- C E G E (C major, friendly)
+        local step  = math.floor((t % 2.0) / 0.5) % 4 + 1
+        local nt    = t % 0.5
+        local pluck = math.max(0, 1 - nt / 0.5)
+        local bass  = 0.4 * math.sin(TAU * 130.8 * t)
+        return (0.35 * math.sin(TAU * chord[step] * t) * pluck + bass * 0.5) * 0.5
+    end), "static")
+    Assets.sounds.dock_cosy:setLooping(true)
+
+    Assets.sounds.dock_scary = love.audio.newSource(render(4.0, function(t)
+        local drone = 0.5 * math.sin(TAU * 61.7 * t)            -- low rumble
+        local trem  = 0.5 + 0.5 * math.sin(TAU * 6 * t)         -- nervous tremolo
+        local minor = 0.25 * math.sin(TAU * 155.6 * t) * trem   -- minor third
+        local clash = 0.15 * math.sin(TAU * 164.8 * t)          -- dissonant semitone
+        return (drone + minor + clash) * 0.4
+    end), "static")
+    Assets.sounds.dock_scary:setLooping(true)
+end
+
 -- ── Public audio API ───────────────────────────────────────────────────────
 function Assets.loadSounds()
     pcall(makeSounds)
     pcall(makeAmbience)
     pcall(makeMusic)
     pcall(makeVoice)
+    pcall(makeDockMoods)
+end
+
+-- Start/stop the looping harbor theme (ducks the world music while it plays).
+function Assets.startDockMood(mood)
+    Assets.stopDockMood()
+    if not config.AUDIO_ON then return end
+    local key = (mood == "scary") and "dock_scary" or "dock_cosy"
+    local s = Assets.sounds[key]
+    if s then s:setVolume(0.55); s:play(); Assets._dockMood = s end
+    Assets.setMusicVolume(0.12)
+end
+
+function Assets.stopDockMood()
+    if Assets._dockMood then Assets._dockMood:stop(); Assets._dockMood = nil end
+    if config.AUDIO_ON then Assets.setMusicVolume(1.0) end
 end
 
 -- Play a recorded voice clip once. Rewinds first so repeat triggers work.

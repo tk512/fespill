@@ -43,6 +43,7 @@ end
 function Menu:load(game)
     self.game = game
     self.t = 0                 -- time, for gentle animation
+    Assets.stopDockMood()      -- in case we left the world straight from a dock
 
     -- BIG welcome fonts, sized to the screen so the words really stand out.
     local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
@@ -242,7 +243,7 @@ function Menu:draw()
         love.graphics.rectangle("fill", bx, by, bw, bh, 16, 16)
         love.graphics.setColor(c.text_dark)
         love.graphics.setFont(self.game.fonts.big)
-        local label = "Seil ut!"          -- "Set sail!"
+        local label = "Hiv og hoi!"
         love.graphics.print(label,
             bx + bw / 2 - self.game.fonts.big:getWidth(label) / 2,
             by + bh / 2 - self.game.fonts.big:getHeight() / 2)

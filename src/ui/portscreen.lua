@@ -1,17 +1,15 @@
 -- src/ui/portscreen.lua
--- The "docking" screen: a big, reading-free modal that pops up when the boat
--- reaches a port. It shows a photo of the town, a spoken/iconic mission
--- ("Ta 2 passasjerer til Fjellvik"), a 🔊 replay button, and one big "Seil!"
--- button to confirm and head back out.
+-- The "docking" screen, styled like an early-90s strategy game briefing
+-- (Colonization / Railroad Tycoon / Civilization): a chunky beveled wood panel
+-- with a harbor-master PORTRAIT in a sunken frame, a dithered + scanline texture
+-- for that cosy retro CRT feel, and a per-harbor MOOD (cosy theme + warm music,
+-- or scary theme + threatening drone). The harbor master tells the captain the
+-- order: frakt fisk, ta passasjerer, etc.
 --
--- It is an OVERLAY owned by the world scene (not a separate scene), so the
--- boat / camera / cargo all stay in memory while it is open. The world freezes
--- itself while `world.dock` is set and routes input here.
+-- It renders into a LOW-RES canvas that is scaled up with a nearest filter, so
+-- the whole screen (panel, icons, even the text) is authentically pixelized.
 --
--- Three modes (decided by world:openDock):
---   "offer"   — this town wants you to carry passengers/goods somewhere
---   "deliver" — you brought someone/something here: celebrate + gold
---   "visit"   — nothing to do right now (just a friendly hello)
+-- Overlay owned by the world scene; modes: "offer" / "deliver" / "visit".
 
 local config = require("src.config")
 local Assets = require("src.assets")
@@ -19,7 +17,34 @@ local Assets = require("src.assets")
 local PortScreen = {}
 PortScreen.__index = PortScreen
 
--- info = { mode, offer, earned, delivered }
+-- ── Retro colour themes (warm wood vs cold stone) ──────────────────────────
+local THEMES = {
+    cosy = {
+        face = {0.40, 0.29, 0.19}, hi = {0.62, 0.46, 0.30}, lo = {0.20, 0.14, 0.09},
+        title = {0.28, 0.18, 0.11}, accent = {0.95, 0.80, 0.36},
+        text = {0.96, 0.91, 0.76}, well = {0.15, 0.10, 0.07}, dither = {0, 0, 0, 0.10},
+        btn = {0.30, 0.50, 0.26}, btnhi = {0.45, 0.66, 0.36}, btnlo = {0.16, 0.28, 0.13},
+    },
+    scary = {
+        face = {0.22, 0.24, 0.28}, hi = {0.38, 0.40, 0.46}, lo = {0.08, 0.09, 0.12},
+        title = {0.13, 0.09, 0.12}, accent = {0.88, 0.32, 0.28},
+        text = {0.86, 0.86, 0.90}, well = {0.06, 0.07, 0.10}, dither = {0, 0, 0, 0.16},
+        btn = {0.45, 0.20, 0.20}, btnhi = {0.62, 0.32, 0.30}, btnlo = {0.22, 0.10, 0.10},
+    },
+}
+
+-- Cached fonts by pixel size (rendered into the low-res canvas, so these are
+-- small "virtual" sizes that become chunky once the canvas is scaled up).
+local fontCache = {}
+local function vfont(px)
+    px = math.max(6, math.floor(px))
+    if not fontCache[px] then
+        fontCache[px] = love.graphics.newFont(px)
+        fontCache[px]:setFilter("nearest", "nearest")
+    end
+    return fontCache[px]
+end
+
 function PortScreen.new(world, port, info)
     local self = setmetatable({}, PortScreen)
     self.world = world
@@ -28,13 +53,15 @@ function PortScreen.new(world, port, info)
     self.offer = info.offer
     self.earned    = info.earned or 0
     self.delivered = info.delivered or 0
+    self.mission   = info.mission           -- current job (for the "busy" message)
+    self.mood  = port.def.mood or "cosy"
+    self.theme = THEMES[self.mood] or THEMES.cosy
     self.t = 0
+    Assets.startDockMood(self.mood)
     self:playVoice()
     return self
 end
 
--- Try a recorded instruction for this town; fall back to a horn so the button
--- always does *something* until you drop real voice files in assets/voice/.
 function PortScreen:playVoice()
     if not Assets.playNamedVoice("dock_" .. self.port.id) then
         Assets.playSfx("horn")
@@ -45,22 +72,27 @@ function PortScreen:update(dt)
     self.t = self.t + dt
 end
 
--- ── Layout (computed in one place so draw + hit-testing always agree) ───────
-function PortScreen:layout()
-    local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
-    local w = math.min(760, sw * 0.82)
-    local h = math.min(580, sh * 0.86)
-    local x, y = (sw - w) / 2, (sh - h) / 2
-    local photoH = h * 0.40
-    local btnW, btnH = w * 0.55, 76
+-- ── Layout (in VIRTUAL/canvas pixels) ──────────────────────────────────────
+-- The panel fills the whole (already size-capped) canvas; everything is laid
+-- out relative to it.
+function PortScreen:layout(vw, vh)
+    local pw, ph, px, py = vw, vh, 0, 0
+    local pad = math.max(3, math.floor(vw * 0.03))
+    local titleH = math.floor(ph * 0.16)
+    local btnH = math.floor(ph * 0.16)
+    local bodyY = py + titleH + pad
+    local bodyH = ph - titleH - btnH - pad * 3
+    local portraitW = math.floor(pw * 0.36)
     return {
-        sw = sw, sh = sh,
-        x = x, y = y, w = w, h = h,
-        photo   = { x = x, y = y, w = w, h = photoH },
-        speaker = { x = x + w - 74, y = y + 14, w = 60, h = 60 },
-        seil    = { x = x + (w - btnW) / 2, y = y + h - btnH - 22, w = btnW, h = btnH },
-        contentY = y + photoH,
-        contentH = h - photoH - btnH - 44,
+        pad = pad,
+        panel   = { x = px, y = py, w = pw, h = ph },
+        title   = { x = px, y = py, w = pw, h = titleH },
+        portrait= { x = px + pad, y = bodyY, w = portraitW, h = bodyH },
+        brief   = { x = px + portraitW + pad * 2, y = bodyY,
+                    w = pw - portraitW - pad * 3, h = bodyH },
+        seil    = { x = px + pw - math.floor(pw * 0.40) - pad, y = py + ph - btnH - pad,
+                    w = math.floor(pw * 0.40), h = btnH },
+        speaker = { x = px + pad, y = py + ph - btnH - pad, w = btnH, h = btnH },
     }
 end
 
@@ -68,16 +100,17 @@ local function inRect(r, mx, my)
     return mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h
 end
 
--- ── Input ──────────────────────────────────────────────────────────────────
+-- ── Input (map screen px -> virtual px) ─────────────────────────────────────
 function PortScreen:mousepressed(mx, my, button)
-    if button ~= 1 then return end
-    local L = self:layout()
-    if inRect(L.speaker, mx, my) then
+    if button ~= 1 or not self._L then return end
+    mx = mx - self._ox
+    my = my - self._oy
+    if inRect(self._L.speaker, mx, my) then
         self:playVoice()
-    elseif inRect(L.seil, mx, my) then
+    elseif inRect(self._L.seil, mx, my) then
         self:confirm()
-    elseif not inRect(L, mx, my) then
-        self:confirm()                      -- tapping outside the card also leaves
+    elseif not inRect(self._L.panel, mx, my) then
+        self:confirm()
     end
 end
 
@@ -93,211 +126,268 @@ function PortScreen:confirm()
         Assets.playSfx("horn")
         self.world:showToast("Ombord!")
     end
-    self.world.dock = nil                    -- close; world resumes next frame
+    Assets.stopDockMood()
+    self.world.dock = nil
 end
 
 -- ── Drawing ─────────────────────────────────────────────────────────────────
-function PortScreen:draw()
-    local L = self:layout()
-    local fonts = self.world.game.fonts
-
-    -- dim the frozen world behind us
-    love.graphics.setColor(0, 0, 0, 0.55)
-    love.graphics.rectangle("fill", 0, 0, L.sw, L.sh)
-
-    -- a gentle pop-in
-    local pop = math.min(1, self.t / 0.18)
-    love.graphics.push()
-    love.graphics.translate(L.x + L.w / 2, L.y + L.h / 2)
-    love.graphics.scale(0.92 + 0.08 * pop, 0.92 + 0.08 * pop)
-    love.graphics.translate(-(L.x + L.w / 2), -(L.y + L.h / 2))
-
-    -- card
-    love.graphics.setColor(0.97, 0.95, 0.90)
-    love.graphics.rectangle("fill", L.x, L.y, L.w, L.h, 22, 22)
-
-    self:drawPhoto(L)
-    self:drawSpeaker(L)
-    self:drawContent(L, fonts)
-    self:drawSeilButton(L, fonts)
-
-    love.graphics.pop()
-    love.graphics.setColor(1, 1, 1)
+-- A chunky bevel: filled face, light edge top/left, dark edge bottom/right
+-- (swap for a sunken look).
+local function bevel(x, y, w, h, face, hi, lo, t, raised)
+    if raised == nil then raised = true end
+    love.graphics.setColor(face); love.graphics.rectangle("fill", x, y, w, h)
+    local a, b = hi, lo
+    if not raised then a, b = lo, hi end
+    love.graphics.setColor(a)
+    love.graphics.rectangle("fill", x, y, w, t)
+    love.graphics.rectangle("fill", x, y, t, h)
+    love.graphics.setColor(b)
+    love.graphics.rectangle("fill", x, y + h - t, w, t)
+    love.graphics.rectangle("fill", x + w - t, y, t, h)
 end
 
--- Town photo: a real image from assets/ports/photos/<id>.png if present, else a
--- cute procedurally-drawn "postcard" so it always looks intentional.
-function PortScreen:drawPhoto(L)
-    local p = L.photo
-    love.graphics.setScissor(p.x, p.y, p.w, p.h)
-    local img = Assets.portPhoto(self.port.id)
+function PortScreen:draw()
+    local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
+    -- On-screen panel size, CAPPED so it stays a tidy dialog on big monitors
+    -- (otherwise it fills the screen and the text becomes gigantic). Drawn
+    -- DIRECTLY at full resolution so text + edges are razor sharp (no upscaling
+    -- blur). The retro feel comes from chunky bevels, dither and blocky icons.
+    local pw = math.min(math.floor(sw * 0.80), 880)
+    local ph = math.min(math.floor(sh * 0.82), 600)
+    self._ox = math.floor((sw - pw) / 2)   -- centre the panel on screen
+    self._oy = math.floor((sh - ph) / 2)
+    self._L = self:layout(pw, ph)
+
+    -- dim the whole screen behind the (smaller, centred) panel
+    love.graphics.setColor(0, 0, 0, 0.6)
+    love.graphics.rectangle("fill", 0, 0, sw, sh)
+
+    love.graphics.push()
+    love.graphics.translate(self._ox, self._oy)
+    self:drawRetro(self._L, pw, ph)
+    love.graphics.pop()
+    love.graphics.setColor(1, 1, 1, 1)
+end
+
+function PortScreen:drawRetro(L, vw, vh)
+    local th = self.theme
+    local P = L.panel
+    local t = math.max(1, math.floor(vh / 120))   -- bevel thickness (chunky)
+
+    -- main panel (double bevel: raised outer, sunken inner groove)
+    bevel(P.x, P.y, P.w, P.h, th.face, th.hi, th.lo, t, true)
+    bevel(P.x + t * 2, P.y + t * 2, P.w - t * 4, P.h - t * 4, th.face, th.hi, th.lo, t, false)
+
+    -- woodgrain dither + faint CRT scanlines across the panel interior
+    love.graphics.setColor(th.dither)
+    for yy = P.y + t * 3, P.y + P.h - t * 3, 2 do
+        love.graphics.rectangle("fill", P.x + t * 3, yy, P.w - t * 6, 1)
+    end
+
+    self:drawTitle(L, t)
+    self:drawPortrait(L, t)
+    self:drawBrief(L)
+    self:drawButtons(L, t)
+end
+
+function PortScreen:drawTitle(L, t)
+    local th, T = self.theme, L.title
+    bevel(T.x + t * 2, T.y + t * 2, T.w - t * 4, T.h - t * 2, th.title, th.hi, th.lo, t, true)
+    -- town flag swatch
+    local fy = T.y + T.h * 0.5
+    love.graphics.setColor(self.port.color)
+    love.graphics.rectangle("fill", T.x + L.pad * 2, T.y + T.h * 0.28, T.h * 0.28, T.h * 0.45)
+    -- town name (gold, with a hard pixel shadow)
+    local f = vfont(T.h * 0.42)
+    love.graphics.setFont(f)
+    local name = self.port.name
+    local nx = T.x + T.w / 2 - f:getWidth(name) / 2
+    local ny = T.y + T.h / 2 - f:getHeight() / 2
+    love.graphics.setColor(0, 0, 0, 0.6); love.graphics.print(name, nx + 1, ny + 1)
+    love.graphics.setColor(th.accent);    love.graphics.print(name, nx, ny)
+end
+
+function PortScreen:drawPortrait(L, t)
+    local th, R = self.theme, L.portrait
+    bevel(R.x, R.y, R.w, R.h, th.well, th.hi, th.lo, t, false)   -- sunken frame
+    local ix, iy, iw, ih = R.x + t * 2, R.y + t * 2, R.w - t * 4, R.h - t * 4
+    love.graphics.setColor(th.well); love.graphics.rectangle("fill", ix, iy, iw, ih)
+
+    local img = Assets.portPortrait(self.port.id)
     if img then
-        local s = math.max(p.w / img:getWidth(), p.h / img:getHeight())
+        local s = math.min(iw / img:getWidth(), ih / img:getHeight())
         love.graphics.setColor(1, 1, 1)
-        love.graphics.draw(img, p.x + p.w / 2, p.y + p.h / 2, 0, s, s,
+        love.graphics.draw(img, ix + iw / 2, iy + ih / 2, 0, s, s,
             img:getWidth() / 2, img:getHeight() / 2)
     else
-        self:drawPostcard(p)
+        self:drawHarborMaster(ix, iy, iw, ih)
     end
-    love.graphics.setScissor()
 
-    -- town-name banner across the bottom of the photo
-    local fonts = self.world.game.fonts
-    love.graphics.setColor(0, 0, 0, 0.35)
-    love.graphics.rectangle("fill", p.x, p.y + p.h - 46, p.w, 46)
-    love.graphics.setFont(fonts.big)
-    love.graphics.setColor(1, 1, 1)
-    local name = self.port.name
-    love.graphics.print(name, p.x + p.w / 2 - fonts.big:getWidth(name) / 2, p.y + p.h - 44)
+    -- little "HAVNESJEF" (harbor master) name plate under the portrait
+    local f = vfont(R.h * 0.075)
+    love.graphics.setFont(f)
+    local label = "Havnesjef"
+    love.graphics.setColor(0, 0, 0, 0.5)
+    love.graphics.print(label, R.x + R.w / 2 - f:getWidth(label) / 2 + 1, R.y + R.h - f:getHeight() - 3)
+    love.graphics.setColor(th.accent)
+    love.graphics.print(label, R.x + R.w / 2 - f:getWidth(label) / 2, R.y + R.h - f:getHeight() - 4)
 end
 
--- Deterministic per-town placeholder scene (sky, sun, sea, little houses).
-function PortScreen:drawPostcard(p)
-    local col = self.port.color
-    -- sky
-    love.graphics.setColor(0.55, 0.78, 0.93)
-    love.graphics.rectangle("fill", p.x, p.y, p.w, p.h)
-    -- sun
-    love.graphics.setColor(1, 0.95, 0.6)
-    love.graphics.circle("fill", p.x + p.w * 0.82, p.y + p.h * 0.28, p.h * 0.13)
-    -- a row of little houses with this town's roof color
-    local n = 5
-    local hash = #self.port.id
-    for i = 0, n - 1 do
-        local hx = p.x + p.w * (0.10 + i * 0.17)
-        local hh = p.h * (0.20 + ((hash + i * 7) % 5) * 0.03)
-        local hw = p.w * 0.11
-        local hy = p.y + p.h * 0.62 - hh
-        love.graphics.setColor(0.92, 0.88, 0.80)        -- wall
-        love.graphics.rectangle("fill", hx, hy, hw, hh)
-        love.graphics.setColor(col)                     -- roof
-        love.graphics.polygon("fill", hx - 3, hy, hx + hw + 3, hy, hx + hw / 2, hy - p.h * 0.10)
+-- Pixel-art placeholder harbor master (until you drop in a real portrait).
+function PortScreen:drawHarborMaster(x, y, w, h)
+    local u = w / 12                       -- "pixel" unit
+    local function px(cx, cy, cw, ch, col)
+        love.graphics.setColor(col)
+        love.graphics.rectangle("fill", x + cx * u, y + cy * u, cw * u, ch * u)
     end
-    -- sea
-    love.graphics.setColor(0.31, 0.49, 0.60)
-    love.graphics.rectangle("fill", p.x, p.y + p.h * 0.62, p.w, p.h * 0.38)
-    love.graphics.setColor(0.52, 0.64, 0.70, 0.5)
-    for i = 0, 6 do
-        local wy = p.y + p.h * (0.70 + i * 0.04)
-        love.graphics.line(p.x, wy, p.x + p.w, wy)
+    if self.mood == "scary" then
+        px(2, 11, 8, 3, {0.10, 0.10, 0.13})            -- shoulders (dark cloak)
+        px(3, 4, 6, 7, {0.07, 0.07, 0.10})             -- hood
+        px(4, 6, 4, 4, {0.18, 0.16, 0.18})             -- shadowed face
+        px(4.5, 7.5, 1, 1, {0.95, 0.30, 0.25})         -- glowing eyes
+        px(6.5, 7.5, 1, 1, {0.95, 0.30, 0.25})
+    else
+        px(2, 11, 8, 3, {0.20, 0.30, 0.52})            -- navy jacket
+        px(3, 10, 6, 2, {0.85, 0.84, 0.80})            -- collar
+        px(3.5, 4, 5, 6, {0.85, 0.68, 0.52})           -- face
+        px(3.5, 2.5, 5, 2, {0.90, 0.88, 0.84})         -- cap
+        px(3, 4, 6, 1, {0.20, 0.22, 0.30})             -- cap brim
+        px(4, 6, 1, 1, {0.15, 0.12, 0.10})             -- eyes
+        px(7, 6, 1, 1, {0.15, 0.12, 0.10})
+        px(3.5, 8, 5, 2, {0.80, 0.80, 0.80})           -- big white beard
     end
 end
 
-function PortScreen:drawSpeaker(L)
-    local s = L.speaker
-    local pulse = 1 + 0.06 * math.sin(self.t * 6)
-    love.graphics.setColor(0.20, 0.55, 0.85)
-    love.graphics.circle("fill", s.x + s.w / 2, s.y + s.h / 2, s.w / 2 * pulse)
-    -- speaker glyph
-    love.graphics.setColor(1, 1, 1)
-    local cx, cy = s.x + s.w / 2, s.y + s.h / 2
-    love.graphics.polygon("fill", cx - 12, cy - 6, cx - 4, cy - 6, cx + 3, cy - 13,
-        cx + 3, cy + 13, cx - 4, cy + 6, cx - 12, cy + 6)
-    love.graphics.setLineWidth(2)
-    love.graphics.arc("line", "open", cx + 4, cy, 9, -0.8, 0.8)
-    love.graphics.arc("line", "open", cx + 4, cy, 14, -0.8, 0.8)
-    love.graphics.setLineWidth(1)
-end
-
--- The mission itself, drawn big with icons (so a non-reader gets it).
-function PortScreen:drawContent(L, fonts)
-    local cx = L.x + L.w / 2
-    local cy = L.contentY + L.contentH / 2
-    love.graphics.setColor(0.16, 0.16, 0.18)
+function PortScreen:drawBrief(L)
+    local th, B = self.theme, L.brief
+    local cx = B.x + B.w / 2
+    local fh = vfont(B.h * 0.14)
+    local fb = vfont(B.h * 0.11)
 
     if self.mode == "offer" and self.offer then
         local o = self.offer
-        -- icon row: N little passengers / crates
-        self:drawIconRow(o.icon, o.count, cx, cy - 34)
-        -- "til <BY>" with the destination's flag color
-        love.graphics.setFont(fonts.big)
+        love.graphics.setFont(fh)
+        local head = "Oppdrag, kaptein!"
+        love.graphics.setColor(th.accent)
+        love.graphics.print(head, cx - fh:getWidth(head) / 2, B.y + B.h * 0.04)
+
+        self:drawIconRow(o.icon, o.count, cx, B.y + B.h * 0.40, B.h * 0.16)
+
+        love.graphics.setFont(fb)
+        local verb = (o.mode == "passengers") and "Ta" or "Frakt"
         local noun = (o.mode == "passengers")
             and (o.count .. " passasjerer") or (o.count .. " " .. string.lower(o.type))
-        local line1 = "Ta " .. noun
-        local line2 = "til " .. o.toName
-        love.graphics.setColor(0.16, 0.16, 0.18)
-        love.graphics.print(line1, cx - fonts.big:getWidth(line1) / 2, cy + 6)
-        -- destination name in its town color, with a little flag
-        love.graphics.setColor(o.color or {0.3, 0.3, 0.3})
-        love.graphics.print(line2, cx - fonts.big:getWidth(line2) / 2, cy + 6 + fonts.big:getHeight())
+        local l1 = verb .. " " .. noun
+        love.graphics.setColor(th.text)
+        love.graphics.print(l1, cx - fb:getWidth(l1) / 2, B.y + B.h * 0.62)
+        -- destination, in its town colour, with a flag
+        local l2 = "til " .. o.toName
+        local w2 = fb:getWidth(l2)
+        love.graphics.setColor(o.color or th.text)
+        love.graphics.print(l2, cx - w2 / 2, B.y + B.h * 0.78)
+        love.graphics.rectangle("fill", cx - w2 / 2 - fb:getHeight() * 0.9,
+            B.y + B.h * 0.78 + fb:getHeight() * 0.15, fb:getHeight() * 0.5, fb:getHeight() * 0.7)
+
+    elseif self.mode == "busy" then
+        -- already carrying a job for another town: friendly "see you later!"
+        love.graphics.setFont(fh)
+        local t1 = "Vi sees, kaptein!"
+        love.graphics.setColor(th.accent)
+        love.graphics.print(t1, cx - fh:getWidth(t1) / 2, B.y + B.h * 0.06)
+        local m = self.mission
+        if m then
+            self:drawIconRow(m.icon, m.count, cx, B.y + B.h * 0.42, B.h * 0.16)
+            love.graphics.setFont(fb)
+            local l1 = "Du har alt et oppdrag."
+            love.graphics.setColor(th.text)
+            love.graphics.print(l1, cx - fb:getWidth(l1) / 2, B.y + B.h * 0.62)
+            local l2 = "Reis til " .. m.toName .. "!"
+            love.graphics.setColor(m.color or th.text)
+            love.graphics.print(l2, cx - fb:getWidth(l2) / 2, B.y + B.h * 0.78)
+        else
+            love.graphics.setFont(fb)
+            local l1 = "Kom tilbake senere!"
+            love.graphics.setColor(th.text)
+            love.graphics.print(l1, cx - fb:getWidth(l1) / 2, B.y + B.h * 0.5)
+        end
 
     elseif self.mode == "deliver" then
-        self:drawIconRow("smile", math.max(1, self.delivered), cx, cy - 34)
-        love.graphics.setFont(fonts.title)
-        local t1 = "Bra jobba!"
-        love.graphics.setColor(0.20, 0.55, 0.30)
-        love.graphics.print(t1, cx - fonts.title:getWidth(t1) / 2, cy - 6)
-        love.graphics.setFont(fonts.big)
+        self:drawIconRow("smile", math.max(1, self.delivered), cx, B.y + B.h * 0.32, B.h * 0.16)
+        love.graphics.setFont(fh)
+        local t1 = "Godt levert!"
+        love.graphics.setColor(th.accent)
+        love.graphics.print(t1, cx - fh:getWidth(t1) / 2, B.y + B.h * 0.56)
+        love.graphics.setFont(fb)
         local t2 = "+" .. self.earned .. " gull"
         love.graphics.setColor(config.colors.gold)
-        love.graphics.print(t2, cx - fonts.big:getWidth(t2) / 2, cy - 6 + fonts.title:getHeight())
-
-    else -- visit
-        love.graphics.setFont(fonts.big)
-        local t = "Velkommen!"
-        love.graphics.setColor(0.16, 0.16, 0.18)
-        love.graphics.print(t, cx - fonts.big:getWidth(t) / 2, cy - fonts.big:getHeight() / 2)
+        love.graphics.print(t2, cx - fb:getWidth(t2) / 2, B.y + B.h * 0.76)
+    else
+        love.graphics.setFont(fh)
+        local t = "Velkommen i havn!"
+        love.graphics.setColor(th.text)
+        love.graphics.print(t, cx - fh:getWidth(t) / 2, B.y + B.h / 2 - fh:getHeight() / 2)
     end
 end
 
--- Draw `count` little icons centered on (cx, y).
-function PortScreen:drawIconRow(kind, count, cx, y)
+function PortScreen:drawIconRow(kind, count, cx, y, s)
     count = math.min(count, 6)
-    local size = 34
-    local gap = size + 14
+    local gap = s * 1.5
     local total = (count - 1) * gap
     for i = 1, count do
-        self:drawIcon(kind, cx - total / 2 + (i - 1) * gap, y, size)
+        self:drawIcon(kind, cx - total / 2 + (i - 1) * gap, y, s)
     end
 end
 
 function PortScreen:drawIcon(kind, x, y, s)
     if kind == "passenger" or kind == "smile" then
-        love.graphics.setColor(0.95, 0.80, 0.55)            -- head
-        love.graphics.circle("fill", x, y - s * 0.25, s * 0.28)
-        love.graphics.setColor(0.30, 0.50, 0.75)            -- body
-        love.graphics.arc("fill", x, y + s * 0.45, s * 0.5, math.pi, 2 * math.pi)
-        if kind == "smile" then
-            love.graphics.setColor(0.16, 0.16, 0.18)
-            love.graphics.circle("fill", x - s * 0.10, y - s * 0.30, s * 0.04)
-            love.graphics.circle("fill", x + s * 0.10, y - s * 0.30, s * 0.04)
-        end
+        love.graphics.setColor(0.95, 0.80, 0.55)
+        love.graphics.rectangle("fill", x - s * 0.22, y - s * 0.55, s * 0.44, s * 0.44)  -- head
+        love.graphics.setColor(0.30, 0.45, 0.70)
+        love.graphics.rectangle("fill", x - s * 0.40, y - s * 0.10, s * 0.80, s * 0.55)  -- body
     elseif kind == "fish" then
-        love.graphics.setColor(0.45, 0.60, 0.78)
-        love.graphics.ellipse("fill", x, y, s * 0.5, s * 0.30)
-        love.graphics.polygon("fill", x + s * 0.4, y, x + s * 0.6, y - s * 0.2, x + s * 0.6, y + s * 0.2)
+        love.graphics.setColor(0.55, 0.68, 0.82)
+        love.graphics.rectangle("fill", x - s * 0.45, y - s * 0.22, s * 0.7, s * 0.44)   -- body
+        love.graphics.polygon("fill", x + s * 0.25, y, x + s * 0.5, y - s * 0.3, x + s * 0.5, y + s * 0.3)
+        love.graphics.setColor(0.12, 0.14, 0.18)
+        love.graphics.rectangle("fill", x - s * 0.32, y - s * 0.08, s * 0.12, s * 0.12)  -- eye
     elseif kind == "apple" then
         love.graphics.setColor(0.80, 0.30, 0.25)
-        love.graphics.circle("fill", x, y, s * 0.38)
-        love.graphics.setColor(0.36, 0.27, 0.17)
-        love.graphics.rectangle("fill", x - 2, y - s * 0.5, 4, s * 0.22)
-    elseif kind == "flower" then
-        love.graphics.setColor(0.90, 0.40, 0.60)
-        for a = 0, 5 do
-            local ang = a / 6 * math.pi * 2
-            love.graphics.circle("fill", x + math.cos(ang) * s * 0.26, y + math.sin(ang) * s * 0.26, s * 0.16)
-        end
-        love.graphics.setColor(0.95, 0.85, 0.35)
-        love.graphics.circle("fill", x, y, s * 0.16)
-    else -- generic crate
+        love.graphics.rectangle("fill", x - s * 0.35, y - s * 0.35, s * 0.7, s * 0.7)
+    else
         love.graphics.setColor(0.60, 0.45, 0.28)
-        love.graphics.rectangle("fill", x - s * 0.4, y - s * 0.4, s * 0.8, s * 0.8, 3, 3)
+        love.graphics.rectangle("fill", x - s * 0.4, y - s * 0.4, s * 0.8, s * 0.8)
         love.graphics.setColor(0.40, 0.30, 0.20)
-        love.graphics.rectangle("line", x - s * 0.4, y - s * 0.4, s * 0.8, s * 0.8, 3, 3)
+        love.graphics.rectangle("fill", x - s * 0.4, y - s * 0.05, s * 0.8, s * 0.1)
     end
 end
 
-function PortScreen:drawSeilButton(L, fonts)
-    local b = L.seil
+function PortScreen:drawButtons(L, t)
+    local th = self.theme
     local mx, my = love.mouse.getPosition()
+    mx, my = mx - self._ox, my - self._oy
+
+    -- Seil! button
+    local b = L.seil
     local hover = inRect(b, mx, my)
-    love.graphics.setColor(hover and {0.30, 0.70, 0.40} or {0.25, 0.62, 0.35})
-    love.graphics.rectangle("fill", b.x, b.y, b.w, b.h, 16, 16)
-    love.graphics.setFont(fonts.big)
-    love.graphics.setColor(1, 1, 1)
+    bevel(b.x, b.y, b.w, b.h, hover and th.btnhi or th.btn, th.btnhi, th.btnlo, t, true)
+    local f = vfont(b.h * 0.42)
+    love.graphics.setFont(f)
     local label = "Seil!"
-    love.graphics.print(label, b.x + b.w / 2 - fonts.big:getWidth(label) / 2,
-        b.y + b.h / 2 - fonts.big:getHeight() / 2)
+    love.graphics.setColor(0, 0, 0, 0.5)
+    love.graphics.print(label, b.x + b.w / 2 - f:getWidth(label) / 2 + 1, b.y + b.h / 2 - f:getHeight() / 2 + 1)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print(label, b.x + b.w / 2 - f:getWidth(label) / 2, b.y + b.h / 2 - f:getHeight() / 2)
+
+    -- Speaker / replay button (so a non-reader can hear the order again)
+    local s = L.speaker
+    bevel(s.x, s.y, s.w, s.h, th.face, th.hi, th.lo, t, true)
+    local cxp, cyp = s.x + s.w / 2, s.y + s.h / 2
+    local u = s.h * 0.12
+    love.graphics.setColor(th.accent)
+    love.graphics.rectangle("fill", cxp - u * 2, cyp - u, u * 1.4, u * 2)        -- speaker box
+    love.graphics.polygon("fill", cxp - u * 0.6, cyp - u, cxp + u, cyp - u * 2,
+        cxp + u, cyp + u * 2, cxp - u * 0.6, cyp + u)                            -- cone
+    love.graphics.rectangle("fill", cxp + u * 1.6, cyp - u * 0.4, u * 0.5, u * 0.8)  -- sound wave
 end
 
 return PortScreen

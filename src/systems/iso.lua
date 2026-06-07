@@ -53,13 +53,16 @@ end
 -- the geometry a sprite or placeholder needs: the four ground corners, the
 -- ground center (where a sprite's base anchors), and the on-screen diamond
 -- width (so a PNG can be scaled to exactly cover the footprint).
+-- Reused output table: objects are drawn one at a time and consume the result
+-- immediately, so a single shared table avoids allocating one per draw (= per
+-- visible object per frame), which was a big source of GC churn.
+local _fp = {}
 function Iso.footprint(tx, ty, w, h, T)
     local gx0, gx1 = (tx - 1) * T, (tx - 1 + w) * T
     local gy0, gy1 = (ty - 1) * T, (ty - 1 + h) * T
-    local f = {
-        gx0 = gx0, gx1 = gx1, gy0 = gy0, gy1 = gy1,
-        cx = (gx0 + gx1) / 2, cy = (gy0 + gy1) / 2,  -- ground center
-    }
+    local f = _fp
+    f.gx0, f.gx1, f.gy0, f.gy1 = gx0, gx1, gy0, gy1
+    f.cx, f.cy = (gx0 + gx1) / 2, (gy0 + gy1) / 2     -- ground center
     -- diamond width on screen (before zoom) = T * (w + h) / 2
     local rx = (gx1 - gy0) * Iso.SX
     local lx = (gx0 - gy1) * Iso.SX
