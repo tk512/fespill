@@ -27,6 +27,15 @@ local function clamp01(x)
     return x
 end
 
+-- Split a string into a list of UTF-8 characters (so "å" is one letter). Done
+-- ONCE per title at load, not every frame — rebuilding it each frame was making
+-- the GC hiccup and the boat stutter.
+local function splitChars(s)
+    local t = {}
+    for _, code in utf8.codes(s) do t[#t + 1] = utf8.char(code) end
+    return t
+end
+
 -- Build the biggest font for `text` that still fits within targetW (capped at
 -- maxSize). Lets the welcome title be HUGE without overflowing the screen.
 local function fitFont(text, targetW, maxSize)
@@ -49,6 +58,8 @@ function Menu:load(game)
     local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
     self.welcomeFont = fitFont("Velkommen til", sw * 0.48, sh * 0.12)
     self.titleFont   = fitFont("Båtspillet!",   sw * 0.75, sh * 0.30)
+    self.welcomeText, self.welcomeChars = "Velkommen til", splitChars("Velkommen til")
+    self.titleText,   self.titleChars   = "Båtspillet!",   splitChars("Båtspillet!")
 
     self.boats = {}            -- a few decorative boats drifting by
     for i = 1, 5 do
@@ -59,6 +70,10 @@ function Menu:load(game)
             color = self.game.data.boats[love.math.random(#self.game.data.boats)].color,
         }
     end
+
+    -- The real boat (his boat!) cruising across the sea, big, left -> right.
+    local hw = sw * 0.24                 -- on-screen width: much bigger than the dots
+    self.hero = { x = -hw, y = sh * 0.74, w = hw, speed = sw * 0.13 }
 
     -- Exciting welcome timeline: the voice speaks FIRST (words bounce in to
     -- match), THEN the water splash erupts with a wave-crash sound.
@@ -75,6 +90,8 @@ function Menu:load(game)
     else
         self.splashAt = 1.8
     end
+
+    collectgarbage("collect")   -- clear load garbage so it can't hitch mid-scene
 end
 
 -- A burst of water droplets + foam erupting from the middle of the screen.
@@ -108,6 +125,12 @@ function Menu:update(dt)
         if b.x > w + 30 then b.x = -30 end
     end
 
+    -- The big hero boat sails across and wraps back around.
+    if self.hero then
+        self.hero.x = self.hero.x + self.hero.speed * dt
+        if self.hero.x - self.hero.w > w then self.hero.x = -self.hero.w end
+    end
+
     -- After the voice finishes: erupt the splash + crash, restore the music.
     if not self.splashFired and self.t >= self.splashAt then
         self.splashFired = true
@@ -134,14 +157,11 @@ end
 
 -- Draw a string letter-by-letter, each letter springing in (elastic bounce)
 -- with a staggered delay and a gentle ongoing wobble. Centered on cx.
-function Menu:bouncyText(font, text, cx, baselineY, startDelay, hueBase)
+function Menu:bouncyText(font, text, chars, cx, baselineY, startDelay, hueBase)
     love.graphics.setFont(font)      -- print() uses the CURRENT font, so set it!
     local total = font:getWidth(text)
     local x = cx - total / 2
     local perLetter = 0.06           -- stagger between letters
-    -- Split into UTF-8 characters (so "å" stays one letter, not raw bytes).
-    local chars = {}
-    for _, code in utf8.codes(text) do chars[#chars + 1] = utf8.char(code) end
     for i = 1, #chars do
         local ch = chars[i]
         local cw = font:getWidth(ch)
@@ -205,6 +225,26 @@ function Menu:draw()
         love.graphics.ellipse("fill", b.x, b.y + 12, 16, 4)
     end
 
+    -- The big hero boat (real photo) gliding across the sea.
+    local boatImg = Assets.image("boats/boat1.png")
+    if boatImg and self.hero then
+        boatImg:setFilter("linear", "linear")           -- smooth (it's a photo)
+        local scale = self.hero.w / boatImg:getWidth()
+        local bob = math.sin(self.t * 1.4) * 8
+        local hx, hy = self.hero.x, self.hero.y + bob
+        -- soft shadow + a little wake behind it
+        love.graphics.setColor(0, 0, 0, 0.14)
+        love.graphics.ellipse("fill", hx, hy + 4, self.hero.w * 0.45, self.hero.w * 0.07)
+        love.graphics.setColor(1, 1, 1, 0.5)
+        for k = 1, 5 do
+            love.graphics.ellipse("fill", hx - self.hero.w * (0.45 + k * 0.06),
+                hy + 4, 6, 3)
+        end
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.draw(boatImg, hx, hy, 0, scale, scale,
+            boatImg:getWidth() / 2, boatImg:getHeight() * 0.85)
+    end
+
     -- splash droplets behind the text
     for _, p in ipairs(self.splash) do
         local a = clamp01(1 - p.life / p.ttl)
@@ -226,8 +266,8 @@ function Menu:draw()
     love.graphics.rectangle("fill", 0, sh * 0.05, sw, sh * 0.56)
 
     -- Exciting welcome: two big bouncing lines.
-    self:bouncyText(self.welcomeFont, "Velkommen til", sw / 2, sh * 0.16, 0.10, 0.0)
-    self:bouncyText(self.titleFont,   "Båtspillet!",   sw / 2, sh * 0.42, 0.55, 3.0)
+    self:bouncyText(self.welcomeFont, self.welcomeText, self.welcomeChars, sw / 2, sh * 0.16, 0.10, 0.0)
+    self:bouncyText(self.titleFont,   self.titleText,   self.titleChars,   sw / 2, sh * 0.42, 0.55, 3.0)
 
     -- Start button (appears after the welcome has bounced in)
     local btnIn = clamp01((self.t - 1.6) / 0.5)
