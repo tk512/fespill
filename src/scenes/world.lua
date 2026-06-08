@@ -49,6 +49,7 @@ function World:load(game)
     self.objects = Objects.new()
     for _, port in ipairs(self.ports) do
         self.objects:add(port:toObject())
+        self.objects:add(port:toDockObject())   -- the pier, as its own object
     end
     for _, p in ipairs(self.terrain.props) do
         if p.kind == "forest" then
@@ -195,12 +196,24 @@ function World:update(dt)
         if port:isBoatInRange(self.boat) then self.nearPort = port; break end
     end
 
-    -- Auto-dock: sailing up to a port pops the docking screen (no key needed).
-    -- Debounced so it only opens once per arrival — sail away and back to redo.
-    if self.nearPort then
-        if self.nearPort.id ~= self.dockSuppress then
-            self:openDock(self.nearPort)
+    -- Docking with a "latch": when the boat gets close it is gently pulled into
+    -- the berth beside the pier, and only THEN does the screen open — so it
+    -- parks neatly instead of unloading out at sea / under the harbour.
+    if self.latching then
+        local bx, by = self.latching:berth()
+        local dx, dy = bx - self.boat.x, by - self.boat.y
+        self.boat:setDestination(bx, by)            -- keep pulling it in
+        self._latchT = (self._latchT or 0) + dt
+        if (dx * dx + dy * dy) < (20 * 20) or self._latchT > 2.5 then
+            local p = self.latching
+            self.latching, self._latchT = nil, 0
+            self:openDock(p)
             return
+        end
+    elseif self.nearPort then
+        if self.nearPort.id ~= self.dockSuppress then
+            self.latching = self.nearPort           -- start the glide-in
+            self._latchT = 0
         end
     else
         self.dockSuppress = nil  -- left all ports; allow docking again
@@ -436,9 +449,9 @@ end
 -- While docked, all input goes to the docking screen.
 function World:keypressed(key)
     if self.dock then self.dock:keypressed(key); return end
-    if key == "space" then
-        if self.nearPort then self:openDock(self.nearPort) end  -- manual dock too
-    elseif key == "c" then
+    -- Docking is fully automatic (sail up to a port and the screen pops up), so
+    -- there's no "press a key to load" — that just confused a non-reader.
+    if key == "c" then
         self.camera:centerOn(self.boat.x, self.boat.y)  -- recenter on the boat
     end
 end
@@ -446,6 +459,7 @@ end
 function World:mousepressed(x, y, button)
     if self.dock then self.dock:mousepressed(x, y, button); return end
     if button == 1 then
+        if self.latching then return end   -- being pulled into the berth; ignore clicks
         local wx, wy = self.camera:screenToWorld(x, y)
         self.boat:setDestination(wx, wy)
     elseif button == 2 then

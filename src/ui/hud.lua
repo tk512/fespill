@@ -48,7 +48,7 @@ function HUD.draw(world)
     -- ── Bottom-left: controls hint ──────────────────────────────────────
     love.graphics.setFont(fonts.small)
     love.graphics.setColor(c.text[1], c.text[2], c.text[3], 0.8)
-    local hint = "Klikk = seil dit   •   Mus mot kanten = flytt kart   •   C = midtstill   •   MELLOMROM = last/lever   •   ESC = meny"
+    local hint = "Klikk = seil dit   •   Mus mot kanten = flytt kart   •   C = midtstill   •   ESC = meny"
     love.graphics.print(hint, 16, sh - 26)
 
     -- ── Top-center: current mission banner (so it's clear we're ON a job) ──
@@ -56,10 +56,7 @@ function HUD.draw(world)
         HUD.drawMission(world, sw, sh, c, fonts)
     end
 
-    -- ── Bottom-center: contextual port prompt ───────────────────────────
-    if world.nearPort then
-        HUD.drawPortPrompt(world, sw, sh, c, fonts)
-    end
+    -- (Docking is automatic, so there's no "press space" port prompt anymore.)
 
     -- ── Center: toast message ───────────────────────────────────────────
     if world.toast and world.toast.timer > 0 then
@@ -115,49 +112,6 @@ function HUD.drawMission(world, sw, sh, c, fonts)
     love.graphics.setColor(1, 1, 1)
 end
 
-function HUD.drawPortPrompt(world, sw, sh, c, fonts)
-    local port  = world.nearPort
-    local boat  = world.boat
-    local offer = world.cargoSystem:offerAt(port.id)
-
-    -- What can the player do here right now?
-    local lines = {}
-    -- Deliveries waiting for this port?
-    for _, item in ipairs(boat.cargo) do
-        if item.toId == port.id then
-            lines[#lines + 1] = "Lever " .. item.type .. " (+" .. item.reward .. " gull)"
-        end
-    end
-    -- Pickup available?
-    if offer and boat:hasRoom() then
-        lines[#lines + 1] = "Last " .. offer.type .. "  →  " .. offer.toName
-    elseif offer and not boat:hasRoom() then
-        lines[#lines + 1] = "Båten er full!"
-    end
-
-    if #lines == 0 then return end
-
-    love.graphics.setFont(fonts.normal)
-    local w = 360
-    for _, l in ipairs(lines) do
-        w = math.max(w, fonts.normal:getWidth(l) + 60)
-    end
-    local h = 44 + #lines * 24
-    local x = sw / 2 - w / 2
-    local y = sh - h - 70
-
-    panel(x, y, w, h)
-    love.graphics.setColor(c.gold)
-    love.graphics.setFont(fonts.normal)
-    local title = "Trykk MELLOMROM"
-    love.graphics.print(title, sw / 2 - fonts.normal:getWidth(title) / 2, y + 10)
-
-    love.graphics.setFont(fonts.small)
-    love.graphics.setColor(c.text)
-    for i, l in ipairs(lines) do
-        love.graphics.print(l, sw / 2 - fonts.small:getWidth(l) / 2, y + 40 + (i - 1) * 22)
-    end
-end
 
 function HUD.drawToast(world, sw, sh, c, fonts)
     local t = world.toast

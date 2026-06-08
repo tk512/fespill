@@ -174,6 +174,55 @@ local function rot(px, py, a, ox, oy)
     return ox + px * c - py * s, oy + px * s + py * c
 end
 
+-- Churning foam under the boat instead of a (laughably round) shadow. The boat
+-- is a side-view billboard, so the wake trails HORIZONTALLY off the stern along
+-- the waterline (a vertical/iso wake would just hide behind the tall sprite).
+-- There's always a froth at the hull; when moving, foam fans out behind, drifts
+-- back and fades — so it reads as waves cycling out behind the boat.
+function Boat:drawWake(sx, sy, want)
+    local t = love.timer.getTime()
+    local vsx = (math.cos(self.angle) - math.sin(self.angle)) * Iso.SX
+    local wdir = (vsx >= 0) and -1 or 1       -- bow faces travel; wake goes opposite
+    local spd = 0
+    if self.maxSpeed and self.maxSpeed > 0 then spd = math.min(1, self.speed / self.maxSpeed) end
+
+    if spd <= 0.05 then return end            -- no foam when the boat is still
+
+    local sternX = sx + wdir * want * 0.30
+    local line = sy + want * 0.02             -- the waterline
+
+    -- a small churning froth right at the stern
+    for k = 1, 5 do
+        local nz = math.sin(t * 8 + k * 1.7) * 0.5 + 0.5
+        love.graphics.setColor(1, 1, 1, (0.25 + 0.30 * nz) * spd)
+        love.graphics.circle("fill",
+            sternX + wdir * k * want * 0.018,
+            line + (k % 3 - 1) * want * 0.03 + nz * want * 0.012,
+            want * (0.03 + 0.025 * nz))
+    end
+
+    -- a short trailing wake: little noisy foam dabs that drift back and fade
+    local n = 14
+    for k = 1, n do
+        local ph = (t * 0.5 + k / n) % 1
+        local fade = (1 - ph) * spd
+        if fade > 0.01 then
+            local jx = math.sin(t * 6 + k * 5.1) * want * 0.025
+            local fx = sternX + wdir * ph * want * 0.7 + jx
+            local fan = (0.03 + ph * 0.11) * want
+            local nz = math.sin(t * 5 + k * 2.3) * want * 0.02
+            local r = want * (0.022 + ph * 0.03) * (0.7 + 0.6 * (math.sin(t * 9 + k) * 0.5 + 0.5))
+            for row = -1, 1, 2 do
+                love.graphics.setColor(1, 1, 1, 0.65 * fade)
+                love.graphics.circle("fill", fx, line + row * fan + nz, r)
+            end
+            love.graphics.setColor(0.92, 0.97, 0.99, 0.35 * fade)
+            love.graphics.circle("fill", fx, line + nz * 0.5, r * 0.85)
+        end
+    end
+    love.graphics.setColor(1, 1, 1)
+end
+
 function Boat:draw()
     -- Big side-profile billboard anchored on the water. Just two photos: one
     -- bow-right (def.sprite) and one bow-left (<base>_left.png / def.spriteLeft),
@@ -201,8 +250,7 @@ function Boat:draw()
         local sx, sy = Iso.project(self.x, self.y, 0)
         local want = (self.def.spriteWidth or config.BOAT_SPRITE_WIDTH)
         local scale = want / img:getWidth()
-        love.graphics.setColor(0, 0, 0, 0.16)   -- soft shadow on the water
-        love.graphics.ellipse("fill", sx, sy + 2, want * 0.45, want * 0.16)
+        self:drawWake(sx, sy, want)             -- churning foam instead of a shadow
         love.graphics.setColor(1, 1, 1)
         love.graphics.draw(img, sx, sy, 0, scale * flip, scale,
             img:getWidth() / 2, img:getHeight() * 0.85)
@@ -229,7 +277,7 @@ function Boat:drawVolumetric()
     local sxc, syc = Iso.project(self.x, self.y, 0)
     love.graphics.setColor(0, 0, 0, 0.16)
     love.graphics.ellipse("fill", sxc, syc + 4, 26, 13)
-    self:drawWake(sxc, syc)
+    self:drawVolumetricWake(sxc, syc)
 
     -- Hull side walls (draw every edge; hidden faces get painted over by the deck).
     love.graphics.setColor(c.boat_hull_dk)
@@ -253,7 +301,8 @@ function Boat:drawVolumetric()
     self:drawCabin(c)
 end
 
-function Boat:drawWake(sxc, syc)
+-- Old simple wake, kept only for the code-drawn volumetric fallback boat.
+function Boat:drawVolumetricWake(sxc, syc)
     if self.speed < 25 then return end
     local a = math.min(0.35, self.speed / self.maxSpeed * 0.35)
     -- two streaks trailing the stern (opposite the heading)

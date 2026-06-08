@@ -266,7 +266,7 @@ end
 function Assets.loadSounds()
     pcall(makeSounds)
     pcall(makeAmbience)
-    pcall(makeMusic)
+    pcall(makeMusic)       -- the synthesized 90s-style tune (the good fit!)
     pcall(makeVoice)
     pcall(makeDockMoods)
 end

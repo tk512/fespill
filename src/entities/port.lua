@@ -56,6 +56,14 @@ function Port:dockPoint()
     return self.x + self.seaDx * d, self.y + self.seaDy * d
 end
 
+-- Where the boat parks: just SEA-ward of the dock point, so it sits in open
+-- water beside the pier (not tucked under the harbour). The boat glides here
+-- (the "latch") before the docking screen opens.
+function Port:berth()
+    local dpx, dpy = self:dockPoint()
+    return dpx + self.seaDx * 34, dpy + self.seaDy * 34
+end
+
 function Port:isBoatInRange(boat)
     local dpx, dpy = self:dockPoint()
     local dx, dy = boat.x - dpx, boat.y - dpy
@@ -69,6 +77,62 @@ function Port:toObject()
         data = self,
         draw = function(_, g) self:drawPlaceholder(g) end,
     }
+end
+
+-- The PIER as a SEPARATE object (so it depth-sorts with the boat, and so you can
+-- replace just the dock art later with assets/ports/dock.png). It sits at the
+-- dock-point tile, out in the water in front of the harbour.
+function Port:toDockObject()
+    local T = config.TILE
+    local dpx, dpy = self:dockPoint()
+    return {
+        tx = math.floor(dpx / T) + 1, ty = math.floor(dpy / T) + 1, w = 1, h = 1, z = 0,
+        sprite = "ports/dock.png",
+        data = self,
+        draw = function(_, g) self:drawDock() end,
+    }
+end
+
+-- A little wooden jetty reaching from the shore out to the dock point.
+function Port:drawDock()
+    local c = config.colors
+    local T = config.TILE
+    local dpx, dpy = self:dockPoint()
+    local sdx, sdy = self.seaDx, self.seaDy        -- toward the sea
+    local px, py   = -sdy, sdx                      -- along the shore
+    local len, hw, deckZ = T * 1.5, T * 0.16, 9    -- reach, half-width, deck height
+
+    -- point at distance s along the sea axis (0 = dock point, negative = shoreward)
+    -- and offset w across the shore axis, at height z.
+    local function P(s, w, z)
+        return Iso.project(dpx + sdx * s + px * w, dpy + sdy * s + py * w, z)
+    end
+
+    -- support posts
+    for i = 0, 3 do
+        local s = -len * (i / 3) - len * 0.02
+        for _, w in ipairs({ -hw * 0.8, hw * 0.8 }) do
+            Objects.box(dpx + sdx * s + px * w, dpy + sdy * s + py * w, 2, 2, 0, deckZ, c.dock_side)
+        end
+    end
+
+    -- deck top
+    local a1, a2 = P(0.1 * T, hw, deckZ)
+    local b1, b2 = P(0.1 * T, -hw, deckZ)
+    local d1, d2 = P(-len, -hw, deckZ)
+    local e1, e2 = P(-len, hw, deckZ)
+    love.graphics.setColor(c.dock_top)
+    love.graphics.polygon("fill", a1, a2, b1, b2, d1, d2, e1, e2)
+
+    -- plank seams across the deck
+    love.graphics.setColor(c.dock_side[1], c.dock_side[2], c.dock_side[3], 0.7)
+    for i = 0, 6 do
+        local s = 0.1 * T - (0.1 * T + len) * (i / 6)
+        local f1, f2 = P(s, hw, deckZ)
+        local g1, g2 = P(s, -hw, deckZ)
+        love.graphics.line(f1, f2, g1, g2)
+    end
+    love.graphics.setColor(1, 1, 1)
 end
 
 function Port:drawPlaceholder(g)
@@ -122,20 +186,8 @@ function Port:drawPlaceholder(g)
     box(28, 12, 7, 7, z, z + 14, col(5))
     box(40, 24, 6, 6, z, z + 11, col(2))
 
-    -- 8) stone breakwater curving out into the sea (protects the harbor)
-    for k = 1, 7 do
-        local s = 70 + k * 22
-        local p = 62 + k * k * 1.6              -- gentle curve
-        box(s, p, 11, 11, 0, 9, c.stone)
-    end
-
-    -- 9) docked ships of different types along the quay (on the water)
-    local shipAngle = math.atan2(py, px)
-    for idx = -1, 1 do
-        local sc = config.SHIP_COLORS[((idx + salt + 1) % #config.SHIP_COLORS) + 1]
-        Objects.drawShip(gxof(64, idx * 40), gyof(64, idx * 40), shipAngle, sc,
-            (idx == 0) and 1.15 or 0.9, 0)
-    end
+    -- (The pier/dock is drawn separately — see Port:drawDock — so the town art
+    -- and the dock art can each be swapped out on their own later.)
 
     self:drawLabel(g)
     love.graphics.setColor(1, 1, 1)

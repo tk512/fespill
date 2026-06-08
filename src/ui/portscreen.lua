@@ -59,17 +59,78 @@ function PortScreen.new(world, port, info)
     self.t = 0
     Assets.startDockMood(self.mood)
     self:playVoice()
+    if self.mode == "deliver" then           -- party time: raining gold coins!
+        self.coins = {}
+        for i = 1, 70 do self.coins[i] = self:newCoin() end
+        self.coinSndT, self.coinSndN = 0, 0
+    end
     return self
 end
 
+local function rnd(a, b) return a + love.math.random() * (b - a) end
+
+-- A single gold coin. They start staggered ABOVE the screen so they cascade in,
+-- fall, BOUNCE on a floor near the bottom, and settle into a glittering pile.
+function PortScreen:newCoin()
+    local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
+    return {
+        x = rnd(sw * 0.08, sw * 0.92),
+        y = rnd(-sh * 2.4, -10),                      -- staggered: they rain in over time
+        vx = rnd(-25, 25), vy = rnd(40, 160),
+        spin = rnd(0, 6.28), spinsp = rnd(4, 10),
+        r = rnd(sh * 0.011, sh * 0.022),
+        floor = sh * 0.90 + rnd(-sh * 0.05, sh * 0.06), -- varied so the pile has depth
+        rest = false,
+    }
+end
+
 function PortScreen:playVoice()
-    if not Assets.playNamedVoice("dock_" .. self.port.id) then
-        Assets.playSfx("horn")
-    end
+    -- A mission briefing plays the recorded "Du har et oppdrag!"
+    -- (assets/voice/oppdrag.ogg). Otherwise a per-town clip if you've recorded
+    -- one (assets/voice/dock_<id>.ogg), else a friendly boat horn.
+    if self.mode == "offer" and Assets.playNamedVoice("oppdrag") then return end
+    if Assets.playNamedVoice("dock_" .. self.port.id) then return end
+    Assets.playSfx("horn")
 end
 
 function PortScreen:update(dt)
     self.t = self.t + dt
+    if self.coins then
+        for _, co in ipairs(self.coins) do
+            if not co.rest then
+                co.vy = co.vy + 900 * dt               -- gravity
+                co.x = co.x + co.vx * dt
+                co.y = co.y + co.vy * dt
+                co.spin = co.spin + co.spinsp * dt
+                if co.y >= co.floor then
+                    co.y = co.floor
+                    if co.vy > 80 then                 -- bounce, losing energy
+                        co.vy = -co.vy * 0.45
+                        co.vx = co.vx * 0.7
+                        co.spinsp = co.spinsp * 0.6
+                    else                               -- come to rest in the pile
+                        co.vy, co.vx, co.spinsp, co.rest = 0, 0, 0, true
+                    end
+                end
+            end
+        end
+        -- a quick cascade of coin "blips" right after delivery
+        self.coinSndT = self.coinSndT + dt
+        if self.coinSndN < 7 and self.coinSndT > self.coinSndN * 0.09 then
+            Assets.playSfx("coin"); self.coinSndN = self.coinSndN + 1
+        end
+    end
+end
+
+function PortScreen:drawCoin(co)
+    local sq = math.abs(math.cos(co.spin))          -- fake spin: squish the width
+    local rx = co.r * (0.22 + 0.78 * sq)
+    love.graphics.setColor(0.60, 0.45, 0.10)         -- dark rim
+    love.graphics.ellipse("fill", co.x, co.y, rx + 1, co.r + 1)
+    love.graphics.setColor(0.88, 0.68, 0.20)         -- gold
+    love.graphics.ellipse("fill", co.x, co.y, rx, co.r)
+    love.graphics.setColor(0.99, 0.88, 0.45)         -- highlight
+    love.graphics.ellipse("fill", co.x - rx * 0.2, co.y - co.r * 0.2, rx * 0.5, co.r * 0.5)
 end
 
 -- ── Layout (in VIRTUAL/canvas pixels) ──────────────────────────────────────
@@ -166,6 +227,11 @@ function PortScreen:draw()
     love.graphics.translate(self._ox, self._oy)
     self:drawRetro(self._L, pw, ph)
     love.graphics.pop()
+
+    -- raining gold coins POUR over the whole screen during a delivery party
+    if self.coins then
+        for _, co in ipairs(self.coins) do self:drawCoin(co) end
+    end
     love.graphics.setColor(1, 1, 1, 1)
 end
 
@@ -207,13 +273,62 @@ function PortScreen:drawTitle(L, t)
     love.graphics.setColor(th.accent);    love.graphics.print(name, nx, ny)
 end
 
+-- An abstract, blocky "dock & loading area" painted behind the harbour master:
+-- water up top, a planked quay, a crane silhouette and a few stacked crates.
+-- Muted on purpose so the face (drawn on top) stays the focus. Scary harbours
+-- get a colder, darker version.
+function PortScreen:drawDockBackdrop(x, y, w, h)
+    local scary = (self.mood == "scary")
+    local water = scary and {0.18, 0.20, 0.24} or {0.28, 0.42, 0.52}
+    local wstk  = scary and {0.30, 0.32, 0.36} or {0.40, 0.54, 0.62}
+    local quay  = scary and {0.20, 0.18, 0.20} or {0.34, 0.25, 0.16}
+    local seam  = scary and {0.12, 0.11, 0.13} or {0.24, 0.17, 0.10}
+    local edge  = scary and {0.30, 0.28, 0.30} or {0.44, 0.33, 0.20}
+    local waterH = h * 0.58
+
+    love.graphics.setColor(water)
+    love.graphics.rectangle("fill", x, y, w, waterH)
+    love.graphics.setColor(wstk[1], wstk[2], wstk[3], 0.55)        -- water glints
+    for i = 1, 3 do love.graphics.rectangle("fill", x, y + waterH * (0.25 + i * 0.18), w, 2) end
+
+    -- crane silhouette in the back
+    love.graphics.setColor(0.15, 0.15, 0.17, 0.85)
+    local mx = x + w * 0.74
+    love.graphics.rectangle("fill", mx, y + waterH * 0.12, 5, waterH * 0.78)        -- mast
+    love.graphics.rectangle("fill", mx - w * 0.22, y + waterH * 0.12, w * 0.27, 5)  -- jib
+    love.graphics.rectangle("fill", mx - w * 0.20, y + waterH * 0.17, 3, waterH * 0.18) -- cable
+
+    -- planked quay
+    love.graphics.setColor(quay)
+    love.graphics.rectangle("fill", x, y + waterH, w, h - waterH)
+    love.graphics.setColor(edge)
+    love.graphics.rectangle("fill", x, y + waterH - 3, w, 4)                         -- quay edge
+    love.graphics.setColor(seam)
+    for i = 1, 4 do love.graphics.rectangle("fill", x, y + waterH + (h - waterH) * (i / 5), w, 2) end
+
+    -- a few stacked crates (the loading area), in muted town colours
+    local cr = config.BUILDING_COLORS
+    local s = w * 0.13
+    local function crate(cx, cy, col)
+        love.graphics.setColor(col[1] * 0.8, col[2] * 0.8, col[3] * 0.8)
+        love.graphics.rectangle("fill", cx, cy, s, s)
+        love.graphics.setColor(0, 0, 0, 0.25)
+        love.graphics.rectangle("line", cx, cy, s, s)
+    end
+    crate(x + w * 0.05, y + h - s, cr[1])
+    crate(x + w * 0.05 + s * 0.55, y + h - s * 2, cr[3])
+    crate(x + w * 0.80, y + h - s, cr[4])
+    love.graphics.setColor(1, 1, 1)
+end
+
 function PortScreen:drawPortrait(L, t)
     local th, R = self.theme, L.portrait
     bevel(R.x, R.y, R.w, R.h, th.well, th.hi, th.lo, t, false)   -- sunken frame
     local ix, iy, iw, ih = R.x + t * 2, R.y + t * 2, R.w - t * 4, R.h - t * 4
-    love.graphics.setColor(th.well); love.graphics.rectangle("fill", ix, iy, iw, ih)
+    self:drawDockBackdrop(ix, iy, iw, ih)        -- abstract dock & loading area
 
-    local img = Assets.portPortrait(self.port.id)
+    -- a port-specific portrait if present, else the shared default harbour master
+    local img = Assets.portPortrait(self.port.id) or Assets.portPortrait("default")
     if img then
         local s = math.min(iw / img:getWidth(), ih / img:getHeight())
         love.graphics.setColor(1, 1, 1)
@@ -298,7 +413,7 @@ function PortScreen:drawBrief(L)
         if m then
             self:drawIconRow(m.icon, m.count, cx, B.y + B.h * 0.42, B.h * 0.16)
             love.graphics.setFont(fb)
-            local l1 = "Du har alt et oppdrag."
+            local l1 = "Du har allerede oppdrag!"
             love.graphics.setColor(th.text)
             love.graphics.print(l1, cx - fb:getWidth(l1) / 2, B.y + B.h * 0.62)
             local l2 = "Reis til " .. m.toName .. "!"
@@ -312,15 +427,24 @@ function PortScreen:drawBrief(L)
         end
 
     elseif self.mode == "deliver" then
-        self:drawIconRow("smile", math.max(1, self.delivered), cx, B.y + B.h * 0.32, B.h * 0.16)
+        self:drawIconRow("smile", math.max(1, self.delivered), cx, B.y + B.h * 0.16, B.h * 0.16)
+        -- big bouncing "HURRA!" so a toddler instantly gets that this is GOOD
+        local pulse = 1 + 0.10 * math.sin(self.t * 9)
+        local hop = math.abs(math.sin(self.t * 4)) * B.h * 0.05
         love.graphics.setFont(fh)
-        local t1 = "Godt levert!"
+        local t1 = "HURRA!"
+        love.graphics.push()
+        love.graphics.translate(cx, B.y + B.h * 0.46 - hop)
+        love.graphics.scale(pulse, pulse)
+        love.graphics.setColor(0, 0, 0, 0.3)
+        love.graphics.print(t1, -fh:getWidth(t1) / 2 + 2, -fh:getHeight() / 2 + 2)
         love.graphics.setColor(th.accent)
-        love.graphics.print(t1, cx - fh:getWidth(t1) / 2, B.y + B.h * 0.56)
+        love.graphics.print(t1, -fh:getWidth(t1) / 2, -fh:getHeight() / 2)
+        love.graphics.pop()
         love.graphics.setFont(fb)
         local t2 = "+" .. self.earned .. " gull"
         love.graphics.setColor(config.colors.gold)
-        love.graphics.print(t2, cx - fb:getWidth(t2) / 2, B.y + B.h * 0.76)
+        love.graphics.print(t2, cx - fb:getWidth(t2) / 2, B.y + B.h * 0.68)
     else
         love.graphics.setFont(fh)
         local t = "Velkommen i havn!"

@@ -82,7 +82,9 @@ config.EDGE_SCROLL_MARGIN = 38  -- px from a screen edge that triggers scrolling
 config.EDGE_SCROLL_SPEED  = 950 -- scroll speed (screen px / second)
 
 -- ── Gameplay feel (kept gentle on purpose — see CLAUDE.md "child-friendly") ─
-config.PICKUP_RADIUS  = 190   -- how close the boat must be to use a port
+config.PICKUP_RADIUS  = 95    -- how close to a harbour the boat must get to dock
+                              -- (measured from the dock point in the water just
+                              -- in front of the harbour; smaller = must arrive closer)
 config.BOAT_SPRITE_WIDTH = 140 -- on-screen width of the boat sprite (≈2 tiles)
 config.BOUNCE_DAMPING = 0.45  -- how soft collisions feel (0 = dead stop, 1 = bouncy)
 
