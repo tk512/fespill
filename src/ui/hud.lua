@@ -1,72 +1,40 @@
 -- src/ui/hud.lua
 -- Heads-up display, drawn in SCREEN space (after the camera is detached).
--- Shows coins, the current boat + cargo load, contextual port prompts, and
+-- Shows coins, the current boat + cargo load, the active mission, and
 -- short-lived "toast" messages (e.g. "+15 gull!"). Text is Norwegian.
+--
+-- Everything is laid out from MEASURED text widths (running cursor), never
+-- hard-coded pixel offsets, so labels can't collide regardless of font size or
+-- town-name length. Panels use the shared wooden-bevel look (src/ui/retro.lua)
+-- so the in-game UI matches the title and dock screens.
 
 local config = require("src.config")
+local Retro  = require("src.ui.retro")
 
 local HUD = {}
+local WOOD = Retro.WOOD
 
--- Draw a coin icon at (x,y) with radius r.
+-- A wooden plaque: raised outer bevel + a sunken inner well for the content.
+-- Returns the inner content rect (x, y, w, h).
+local function plaque(x, y, w, h, t)
+    Retro.bevel(x, y, w, h, WOOD.face, WOOD.hi, WOOD.lo, t, true)
+    Retro.bevel(x + t, y + t, w - 2 * t, h - 2 * t, WOOD.deep, WOOD.hi, WOOD.lo,
+        math.max(1, math.floor(t * 0.6)), false)
+    return x + t * 2, y + t * 2, w - t * 4, h - t * 4
+end
+
+-- Draw a coin icon centered at (x,y) with radius r.
 local function coin(x, y, r)
     local c = config.colors
+    love.graphics.setColor(0.62, 0.46, 0.08)
+    love.graphics.circle("fill", x, y, r + 1)
     love.graphics.setColor(c.gold)
     love.graphics.circle("fill", x, y, r)
-    love.graphics.setColor(0.8, 0.6, 0.05)
-    love.graphics.circle("line", x, y, r)
-    love.graphics.setColor(1, 1, 1, 0.5)
-    love.graphics.circle("fill", x - r * 0.3, y - r * 0.3, r * 0.25)
+    love.graphics.setColor(1, 1, 1, 0.55)
+    love.graphics.circle("fill", x - r * 0.3, y - r * 0.3, r * 0.28)
 end
 
-local function panel(x, y, w, h)
-    local c = config.colors
-    love.graphics.setColor(c.panel[1], c.panel[2], c.panel[3], 0.78)
-    love.graphics.rectangle("fill", x, y, w, h, 8, 8)
-end
-
--- world exposes: game (for coins + fonts), boat, cargoSystem, nearPort, toast.
-function HUD.draw(world)
-    local c     = config.colors
-    local fonts = world.game.fonts
-    local sw    = love.graphics.getWidth()
-    local sh    = love.graphics.getHeight()
-
-    -- ── Top-left: gold + boat + cargo ───────────────────────────────────
-    love.graphics.setFont(fonts.normal)
-    panel(16, 16, 230, 84)
-    coin(40, 42, 12)
-    love.graphics.setColor(c.text)
-    love.graphics.print(tostring(world.game.state.coins) .. " gull", 60, 30)
-
-    love.graphics.setFont(fonts.small)
-    love.graphics.setColor(c.text)
-    love.graphics.print("Båt: " .. world.boat.def.name, 30, 60)
-    love.graphics.print(
-        "Last: " .. world.boat:cargoCount() .. " / " .. world.boat.capacity,
-        30, 78)
-
-    -- ── Bottom-left: controls hint ──────────────────────────────────────
-    love.graphics.setFont(fonts.small)
-    love.graphics.setColor(c.text[1], c.text[2], c.text[3], 0.8)
-    local hint = "Klikk = seil dit   •   Mus mot kanten = flytt kart   •   C = midtstill   •   ESC = meny"
-    love.graphics.print(hint, 16, sh - 26)
-
-    -- ── Top-center: current mission banner (so it's clear we're ON a job) ──
-    if world.boat.cargo[1] then
-        HUD.drawMission(world, sw, sh, c, fonts)
-    end
-
-    -- (Docking is automatic, so there's no "press space" port prompt anymore.)
-
-    -- ── Center: toast message ───────────────────────────────────────────
-    if world.toast and world.toast.timer > 0 then
-        HUD.drawToast(world, sw, sh, c, fonts)
-    end
-
-    love.graphics.setColor(1, 1, 1)
-end
-
--- A small icon for a mission (passenger / fish / generic), drawn at (x,y).
+-- A small icon (passenger / fish / generic) centered at (x,y), size s.
 local function missionIcon(kind, x, y, s)
     if kind == "passenger" then
         love.graphics.setColor(0.95, 0.80, 0.55)
@@ -77,41 +45,119 @@ local function missionIcon(kind, x, y, s)
         love.graphics.setColor(0.55, 0.68, 0.82)
         love.graphics.rectangle("fill", x - s * 0.42, y - s * 0.2, s * 0.66, s * 0.4)
         love.graphics.polygon("fill", x + s * 0.24, y, x + s * 0.46, y - s * 0.26, x + s * 0.46, y + s * 0.26)
+        love.graphics.setColor(0.12, 0.14, 0.18)
+        love.graphics.rectangle("fill", x - s * 0.28, y - s * 0.06, s * 0.1, s * 0.1)
     else
         love.graphics.setColor(0.60, 0.45, 0.28)
         love.graphics.rectangle("fill", x - s * 0.36, y - s * 0.36, s * 0.72, s * 0.72)
     end
 end
 
--- Top-center banner: "Oppdrag: N <icon> → <BY>" with the town's flag colour.
-function HUD.drawMission(world, sw, sh, c, fonts)
-    local m = world.boat.cargo[1]
+-- world exposes: game (for coins + fonts), boat, cargoSystem, nearPort, toast.
+function HUD.draw(world)
+    local c     = config.colors
+    local fonts = world.game.fonts
+    local sw    = love.graphics.getWidth()
+    local sh    = love.graphics.getHeight()
+    local smH   = fonts.small:getHeight()
+    local nmH   = fonts.normal:getHeight()
+    local t     = math.max(2, math.floor(smH * 0.20))   -- bevel thickness (scaled)
+
+    -- ── Top-left: gold + boat + cargo (a wooden plaque) ─────────────────────
+    local pad  = math.max(6, math.floor(smH * 0.55))
+    local gap  = math.floor(smH * 0.32)
+    local cr   = nmH * 0.42                               -- coin radius
+    local goldStr  = tostring(world.game.state.coins) .. " gull"
+    local boatStr  = "Båt: " .. world.boat.def.name
+    local cargoStr = "Last: " .. world.boat:cargoCount() .. " / " .. world.boat.capacity
+
+    local row1W = cr * 2 + gap + fonts.normal:getWidth(goldStr)
+    local contentW = math.max(row1W, fonts.small:getWidth(boatStr), fonts.small:getWidth(cargoStr))
+    local pw = contentW + (pad + t * 2) * 2
+    local ph = (pad + t * 2) * 2 + nmH + gap + smH + gap + smH
+    local ix, iy = plaque(16, 16, pw, ph, t)
+
+    -- row 1: coin + gold count
+    coin(ix + pad + cr, iy + pad + nmH * 0.5, cr)
     love.graphics.setFont(fonts.normal)
-    local dest = m.toName
-    local w = 320 + fonts.normal:getWidth(dest)
-    local x, y = sw / 2 - w / 2, 16
-    panel(x, y, w, 56)
-
     love.graphics.setColor(c.gold)
-    love.graphics.print("Oppdrag:", x + 16, y + 14)
-    local ix = x + 16 + fonts.normal:getWidth("Oppdrag:") + 28
+    love.graphics.print(goldStr, ix + pad + cr * 2 + gap, iy + pad)
+    -- rows 2 & 3: boat + cargo
+    love.graphics.setFont(fonts.small)
+    love.graphics.setColor(WOOD.text)
+    local ry = iy + pad + nmH + gap
+    love.graphics.print(boatStr, ix + pad, ry)
+    love.graphics.print(cargoStr, ix + pad, ry + smH + gap)
 
-    -- count + icon
-    love.graphics.setColor(c.text)
-    love.graphics.print("x" .. m.count, ix - 22, y + 14)
-    missionIcon(m.icon, ix + 18, y + 28, 26)
+    -- ── Top-center: current mission banner ──────────────────────────────────
+    if world.boat.cargo[1] then
+        HUD.drawMission(world, sw, c, fonts, smH, nmH, t)
+    end
 
-    -- arrow + destination flag + name in its town colour
-    love.graphics.setColor(c.text)
-    love.graphics.print("→", ix + 40, y + 14)
-    local nx = ix + 40 + fonts.normal:getWidth("→ ")
-    love.graphics.setColor(m.color or c.text)
-    love.graphics.rectangle("fill", nx, y + 16, 16, 22)
-    love.graphics.print(dest, nx + 24, y + 14)
+    -- ── Bottom-left: controls hint (subtle, no panel) ───────────────────────
+    love.graphics.setFont(fonts.small)
+    local hint = "Klikk = seil dit   •   Mus mot kanten = flytt kart   •   C = midtstill   •   ESC = meny"
+    love.graphics.setColor(0, 0, 0, 0.45)
+    love.graphics.print(hint, 17, sh - 25)
+    love.graphics.setColor(c.text[1], c.text[2], c.text[3], 0.85)
+    love.graphics.print(hint, 16, sh - 26)
+
+    -- ── Center: toast message ───────────────────────────────────────────────
+    if world.toast and world.toast.timer > 0 then
+        HUD.drawToast(world, sw, sh, c, fonts)
+    end
 
     love.graphics.setColor(1, 1, 1)
 end
 
+-- Top-center banner: "Oppdrag  <icon>×N  →  ▮ <BY>" laid out from measured
+-- widths so nothing overlaps; the destination is shown in its town colour.
+function HUD.drawMission(world, sw, c, fonts, smH, nmH, t)
+    local m = world.boat.cargo[1]
+    local pad  = math.max(8, math.floor(smH * 0.7))
+    local gap  = math.floor(nmH * 0.55)
+    local s    = nmH * 0.9                                 -- icon size
+    local flag = nmH * 0.8                                 -- flag swatch
+    local dest = m.toName
+    local countStr = "×" .. m.count
+
+    -- measure the segments
+    local wLabel = fonts.normal:getWidth("Oppdrag")
+    local wCount = fonts.normal:getWidth(countStr)
+    local wArrow = fonts.normal:getWidth("→")
+    local wDest  = fonts.normal:getWidth(dest)
+    local content = wLabel + gap + s + gap * 0.4 + wCount + gap + wArrow + gap
+                    + flag + gap * 0.5 + wDest
+
+    local ph = nmH + (pad + t * 2)
+    local pw = content + (pad + t * 2) * 2
+    local px = math.floor(sw / 2 - pw / 2)
+    local ix, iy, _, ih = plaque(px, 14, pw, ph, t)
+    local cy = iy + ih / 2                                  -- vertical mid-line
+    local function ty(fontH) return cy - fontH / 2 end
+
+    local cx = ix + pad
+    love.graphics.setFont(fonts.normal)
+
+    -- label
+    love.graphics.setColor(WOOD.accent)
+    love.graphics.print("Oppdrag", cx, ty(nmH)); cx = cx + wLabel + gap
+
+    -- icon ×N
+    missionIcon(m.icon, cx + s / 2, cy, s); cx = cx + s + gap * 0.4
+    love.graphics.setColor(WOOD.text)
+    love.graphics.print(countStr, cx, ty(nmH)); cx = cx + wCount + gap
+
+    -- arrow
+    love.graphics.print("→", cx, ty(nmH)); cx = cx + wArrow + gap
+
+    -- destination flag + name in town colour
+    love.graphics.setColor(m.color or WOOD.text)
+    love.graphics.rectangle("fill", cx, cy - flag / 2, flag, flag); cx = cx + flag + gap * 0.5
+    love.graphics.print(dest, cx, ty(nmH))
+
+    love.graphics.setColor(1, 1, 1)
+end
 
 function HUD.drawToast(world, sw, sh, c, fonts)
     local t = world.toast

@@ -18,7 +18,15 @@ function Camera.new()
     self.gx = config.WORLD_WIDTH  / 2   -- ground point shown at screen center
     self.gy = config.WORLD_HEIGHT / 2
     self.zoom = config.CAMERA_DEFAULT_ZOOM
+    self.shakeMag = 0                    -- screen-shake magnitude (px), decays
+    self.shakeX, self.shakeY = 0, 0
     return self
+end
+
+-- Kick a brief screen shake (e.g. a cannonball hit). Takes the strongest of any
+-- overlapping kicks. Purely visual: only attach() reads it.
+function Camera:addShake(mag)
+    self.shakeMag = math.max(self.shakeMag, mag)
 end
 
 function Camera:centerOn(gx, gy)
@@ -29,6 +37,13 @@ Camera.snapTo = Camera.centerOn
 
 function Camera:update(dt)
     self:clamp()
+    if self.shakeMag > 0 then
+        self.shakeMag = math.max(0, self.shakeMag - 40 * dt)   -- decay
+        self.shakeX = (love.math.random() * 2 - 1) * self.shakeMag
+        self.shakeY = (love.math.random() * 2 - 1) * self.shakeMag
+    else
+        self.shakeX, self.shakeY = 0, 0
+    end
 end
 
 -- Keep the camera's center inside the world.
@@ -76,8 +91,8 @@ function Camera:attach()
     local cx, cy = Iso.project(self.gx, self.gy)
     -- Fold into one translate and SNAP to whole pixels so tile edges don't
     -- shimmer/crawl as the map scrolls.
-    local ox = math.floor(love.graphics.getWidth()  / 2 - cx * self.zoom + 0.5)
-    local oy = math.floor(love.graphics.getHeight() / 2 - cy * self.zoom + 0.5)
+    local ox = math.floor(love.graphics.getWidth()  / 2 - cx * self.zoom + 0.5 + self.shakeX)
+    local oy = math.floor(love.graphics.getHeight() / 2 - cy * self.zoom + 0.5 + self.shakeY)
     love.graphics.push()
     love.graphics.translate(ox, oy)
     love.graphics.scale(self.zoom, self.zoom)

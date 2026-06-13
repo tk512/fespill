@@ -16,7 +16,7 @@
 return {
     {
         id       = "starter_boat",
-        name     = "Vesle-Tuten",      -- "Little Tug"
+        name     = "Sundferjen",       -- the little sound-ferry
         speed    = 140,
         accel    = 90,
         turn     = 1.8,

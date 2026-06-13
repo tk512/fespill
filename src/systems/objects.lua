@@ -227,6 +227,110 @@ function Objects.drawRock(g)
     love.graphics.circle("fill", sx + 5, sy - 3, 5)
 end
 
+-- ── City landmark placeholders (blocky stand-ins; swap for pixel art later) ──
+-- All are anchored on their 1-tile footprint center (g.cx, g.cy) at height g.z.
+-- They mix grounded iso boxes (real volume + depth) with a few screen-space
+-- details (spires, awnings, cables) which is plenty for placeholders.
+
+local function shadow(sx, sy, rx)
+    love.graphics.setColor(0, 0, 0, 0.14)
+    love.graphics.ellipse("fill", sx, sy + 2, rx, rx * 0.5)
+end
+
+-- Church: a white nave + a tall steeple with a red spire and a cross.
+function Objects.drawChurch(g)
+    local cx, cy, z = g.cx, g.cy, g.z or 0
+    local sx, sy = Iso.project(cx, cy, z)
+    shadow(sx, sy, 22)
+    Objects.box(cx + 7, cy, 11, 9, z, z + 20, { 0.92, 0.91, 0.86 })   -- nave
+    -- a little round rose window on the nave's south face
+    local wx, wy = Iso.project(cx + 7, cy + 9, z + 12)
+    love.graphics.setColor(0.30, 0.40, 0.55); love.graphics.circle("fill", wx, wy, 3)
+    Objects.box(cx - 11, cy, 6, 6, z, z + 38, { 0.88, 0.87, 0.82 })   -- steeple tower
+    -- red spire (screen-space triangle on the tower top) + a cross
+    local tx, ty = Iso.project(cx - 11, cy, z + 38)
+    love.graphics.setColor(0.62, 0.30, 0.26)
+    love.graphics.polygon("fill", tx - 9, ty, tx + 9, ty, tx, ty - 26)
+    love.graphics.setColor(0.45, 0.22, 0.19)
+    love.graphics.polygon("fill", tx + 9, ty, tx, ty, tx, ty - 26)     -- shaded side
+    love.graphics.setColor(0.95, 0.92, 0.7)
+    love.graphics.setLineWidth(2)
+    love.graphics.line(tx, ty - 26, tx, ty - 36)                       -- cross post
+    love.graphics.line(tx - 3, ty - 32, tx + 3, ty - 32)              -- cross arms
+    love.graphics.setLineWidth(1)
+end
+
+-- Market square: a cluster of little striped-awning stalls.
+function Objects.drawMarket(g)
+    local cx, cy, z = g.cx, g.cy, g.z or 0
+    local sx, sy = Iso.project(cx, cy, z)
+    shadow(sx, sy, 22)
+    local stalls = {
+        { -10, -6, { 0.80, 0.32, 0.28 } }, { 9, -2, { 0.30, 0.52, 0.62 } },
+        { -2, 8, { 0.82, 0.66, 0.30 } },
+    }
+    for _, s in ipairs(stalls) do
+        local ox, oy = cx + s[1], cy + s[2]
+        Objects.box(ox, oy, 6, 5, z, z + 9, { 0.78, 0.70, 0.55 })      -- stall counter/posts
+        -- striped awning roof (screen-space, two colours)
+        local ax, ay = Iso.project(ox, oy, z + 9)
+        love.graphics.setColor(s[3])
+        love.graphics.polygon("fill", ax - 9, ay - 1, ax + 9, ay - 1, ax + 6, ay - 7, ax - 6, ay - 7)
+        love.graphics.setColor(0.95, 0.94, 0.9)
+        love.graphics.polygon("fill", ax - 3, ay - 1, ax + 1, ay - 1, ax + 0.5, ay - 5, ax - 2.5, ay - 5)
+    end
+end
+
+-- Harbour crane: a steel mast + jib with a hanging hook, beside stacked crates.
+function Objects.drawCrane(g)
+    local cx, cy, z = g.cx, g.cy, g.z or 0
+    local sx, sy = Iso.project(cx, cy, z)
+    shadow(sx, sy, 20)
+    Objects.box(cx - 4, cy + 4, 6, 6, z, z + 8, { 0.34, 0.36, 0.40 })  -- crane base/cab
+    local mx, my = Iso.project(cx - 4, cy + 4, z + 8)
+    love.graphics.setColor(0.24, 0.26, 0.30)
+    love.graphics.setLineWidth(4)
+    love.graphics.line(mx, my, mx, my - 46)                            -- mast
+    love.graphics.line(mx, my - 46, mx + 34, my - 38)                  -- jib
+    love.graphics.setLineWidth(2)
+    love.graphics.setColor(0.20, 0.21, 0.24)
+    love.graphics.line(mx + 30, my - 39, mx + 30, my - 22)             -- cable
+    love.graphics.setColor(0.5, 0.45, 0.2)
+    love.graphics.rectangle("fill", mx + 27, my - 22, 6, 4)            -- hook block
+    -- a couple of cargo crates
+    Objects.box(cx + 9, cy - 6, 5, 5, z, z + 9, { 0.62, 0.46, 0.30 })
+    Objects.box(cx + 8, cy - 5, 4, 4, z + 9, z + 16, { 0.70, 0.54, 0.36 })
+end
+
+-- Fish-drying racks: wooden A-frames with rows of little hanging fish.
+function Objects.drawFishRacks(g)
+    local cx, cy, z = g.cx, g.cy, g.z or 0
+    local sx, sy = Iso.project(cx, cy, z)
+    shadow(sx, sy, 20)
+    for r = -1, 1, 2 do
+        local ox = cx + r * 7
+        local a1x, a1y = Iso.project(ox, cy - 8, z)
+        local a2x, a2y = Iso.project(ox, cy + 8, z)
+        local topx, topy = (a1x + a2x) / 2, math.min(a1y, a2y) - 22
+        love.graphics.setColor(0.42, 0.30, 0.18)
+        love.graphics.setLineWidth(3)
+        love.graphics.line(a1x, a1y, topx, topy)                       -- A-frame legs
+        love.graphics.line(a2x, a2y, topx, topy)
+        love.graphics.setLineWidth(1)
+    end
+    -- horizontal beam + hanging fish between the two frames
+    local lx, ly = Iso.project(cx - 7, cy, z + 20)
+    local rx, ry = Iso.project(cx + 7, cy, z + 20)
+    love.graphics.setColor(0.36, 0.26, 0.16)
+    love.graphics.setLineWidth(3); love.graphics.line(lx, ly, rx, ry); love.graphics.setLineWidth(1)
+    for k = 0, 4 do
+        local fx = lx + (rx - lx) * (k / 4)
+        local fy = ly + (ry - ly) * (k / 4) + 6
+        love.graphics.setColor(0.66, 0.70, 0.74)
+        love.graphics.ellipse("fill", fx, fy, 3, 5)
+    end
+end
+
 -- A small isometric ship (volumetric hull + cabin), oriented by `angle`.
 -- Reused for docked ships in harbors and ambient ships at sea. `scale` ~1.0.
 function Objects.drawShip(gx, gy, angle, color, scale, z)

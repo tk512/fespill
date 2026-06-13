@@ -168,6 +168,62 @@ local function makeSounds()
         local boom = 0.4 * math.sin(TAU * 70 * t) * math.max(0, 1 - t / 0.6)
         return (prev * 2.0 + boom) * amp
     end), "static")
+
+    -- "Leaving the dock": three short beeps (placeholder until a real recording
+    -- is dropped in at assets/sfx/leave.ogg, which overrides this).
+    Assets.sounds.leave = love.audio.newSource(render(0.55, function(t)
+        for i = 0, 2 do
+            local s = i * 0.17
+            if t >= s and t < s + 0.11 then
+                local sq = (math.sin(TAU * 740 * t) > 0) and 0.5 or -0.5
+                return sq * env(t - s, 0.11, 0.005, 0.04)
+            end
+        end
+        return 0
+    end), "static")
+
+    -- Cannon BOOM — horrific: a vicious crack, a deep sub-bass that plunges in
+    -- pitch, a dissonant growl overtone, and a long low-passed rumble tail that
+    -- lingers like distant thunder. A little clipping on purpose = grit.
+    local boomRumble = 0
+    Assets.sounds.cannon = love.audio.newSource(render(0.95, function(t)
+        local crack  = rnd() * math.max(0, 1 - t / 0.03) * 1.2          -- sharp muzzle crack
+        local subF   = 68 - 42 * t                                       -- deep pitch plunge
+        local sub    = math.sin(TAU * subF * t) * math.max(0, 1 - t / 0.7)
+        local growl  = 0.3 * math.sin(TAU * subF * 1.41 * t) * math.max(0, 1 - t / 0.5) -- dissonant tritone-ish
+        boomRumble   = boomRumble * 0.9 + rnd() * 0.1                     -- low-pass rumble
+        local rumble = boomRumble * math.max(0, 1 - t / 0.92) * 0.9
+        return (sub * 1.05 + crack + growl + rumble) * env(t, 0.95, 0.0005, 0.32)
+    end), "static")
+
+    -- Cannonball HIT on the boat: a wet thud + a sad little downward "you lost
+    -- coins" blip + a splash of noise.
+    Assets.sounds.cannon_hit = love.audio.newSource(render(0.45, function(t)
+        local thud   = math.sin(TAU * (150 - 130 * t) * t) * math.max(0, 1 - t / 0.25)
+        local splash = rnd() * 0.5 * math.max(0, 1 - t / 0.3)
+        local note   = (t < 0.18) and 392 or 294                    -- G4 -> D4 (downbeat)
+        local sad    = math.sin(TAU * note * t) * 0.3
+        return (thud * 0.7 + splash * 0.6 + sad) * env(t, 0.45, 0.002, 0.12)
+    end), "static")
+
+    -- Pirate WARNING — a cinematic horror stinger when the pirate appears: three
+    -- VERY low, detuned impact hits that sink in pitch (each with a noise crash),
+    -- over an ominous growling drone, with a dissonant high "tension strings"
+    -- cluster that swells. Scary, but low/cinematic rather than ear-piercing.
+    local warnRumble = 0
+    Assets.sounds.pirate_warn = love.audio.newSource(render(1.7, function(t)
+        local notes = { 73.4, 58.3, 46.2 }                           -- D2, A#1, F#1 — sinking dread
+        local idx = math.min(3, math.floor(t / 0.46) + 1)
+        local lt  = t - (idx - 1) * 0.46
+        local f   = notes[idx]
+        local hit = (math.sin(TAU * f * t) + 0.5 * math.sin(TAU * f * 2.02 * t)) -- detuned octave = grindy
+                    * env(lt, 0.46, 0.004, 0.2)
+        warnRumble = warnRumble * 0.88 + rnd() * 0.12
+        local crash   = warnRumble * math.max(0, 1 - lt / 0.14) * 0.7   -- impact crash on each hit
+        local growl   = 0.3 * math.sin(TAU * 46 * t) * (0.6 + 0.4 * math.sin(TAU * 8 * t)) -- dread drone
+        local tension = (math.sin(TAU * 415 * t) + math.sin(TAU * 440 * t)) * 0.11 * math.min(1, t / 1.3)
+        return (hit * 0.85 + crash + growl + tension) * env(t, 1.7, 0.01, 0.3)
+    end), "static")
 end
 
 -- Ambient ocean: a long, quietly looping bed of filtered noise that swells
@@ -260,6 +316,37 @@ local function makeDockMoods()
         return (drone + minor + clash) * 0.4
     end), "static")
     Assets.sounds.dock_scary:setLooping(true)
+
+    -- Chase drone: an ominous pulsing low bed that loops while a pirate hunts you.
+    Assets.sounds.chase = love.audio.newSource(render(4.0, function(t)
+        local drone = 0.4 * math.sin(TAU * 55 * t)                 -- deep rumble (A1)
+        local pulse = 0.55 + 0.45 * math.sin(TAU * 2.2 * t)        -- racing heartbeat
+        local tens  = 0.2 * math.sin(TAU * 146.8 * t) * (0.5 + 0.5 * math.sin(TAU * 5 * t))
+        return (drone * pulse + tens) * 0.45
+    end), "static")
+    Assets.sounds.chase:setLooping(true)
+end
+
+-- Replace synthesized sfx with real recordings if present (drop files in to
+-- override): assets/sfx/<name>.ogg. e.g. assets/sfx/leave.ogg = the three beeps.
+local function loadSfxFiles()
+    -- Drop a real recording at assets/sfx/<name>.<ext> to override the synth.
+    -- Any LÖVE-supported audio format works (ogg/mp3/flac/wav), tried in order.
+    --   leave        — three "casting off" beeps
+    --   cannon       — pirate cannon BOOM
+    --   cannon_hit   — a ball striking your boat
+    --   pirate_warn  — plays when a pirate appears
+    local names = { "leave", "cannon", "cannon_hit", "pirate_warn" }
+    local exts  = { ".ogg", ".mp3", ".flac", ".wav" }
+    for _, name in ipairs(names) do
+        for _, ext in ipairs(exts) do
+            local path = "assets/sfx/" .. name .. ext
+            if love.filesystem.getInfo(path) then
+                local ok, src = pcall(love.audio.newSource, path, "static")
+                if ok and src then Assets.sounds[name] = src; break end
+            end
+        end
+    end
 end
 
 -- ── Public audio API ───────────────────────────────────────────────────────
@@ -269,6 +356,7 @@ function Assets.loadSounds()
     pcall(makeMusic)       -- the synthesized 90s-style tune (the good fit!)
     pcall(makeVoice)
     pcall(makeDockMoods)
+    pcall(loadSfxFiles)    -- real-file overrides (e.g. assets/sfx/leave.ogg)
 end
 
 -- Start/stop the looping harbor theme (ducks the world music while it plays).
@@ -320,13 +408,27 @@ function Assets.playNamedVoice(name)
 end
 
 -- Play a one-shot effect. Clones the source so overlapping plays work.
-function Assets.playSfx(name)
+function Assets.playSfx(name, vol)
     if not config.AUDIO_ON then return end
     local src = Assets.sounds[name]
     if not src then return end
     local s = src:clone()
-    s:setVolume(config.SFX_VOLUME)
+    s:setVolume(vol or config.SFX_VOLUME)   -- optional louder override
     s:play()
+end
+
+-- Pirate chase music: loop the ominous drone and duck the cheerful tune while a
+-- pirate is hunting; stopChase restores the normal music volume.
+function Assets.startChase()
+    if not config.AUDIO_ON then return end
+    local s = Assets.sounds.chase
+    if s and not s:isPlaying() then s:setVolume(0.55); s:play() end
+    Assets.setMusicVolume(0.25)
+end
+
+function Assets.stopChase()
+    if Assets.sounds.chase then Assets.sounds.chase:stop() end
+    if config.AUDIO_ON then Assets.setMusicVolume(1.0) end
 end
 
 function Assets.startMusic()

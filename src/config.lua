@@ -47,13 +47,14 @@ config.FOREST_DENSITY = 6      -- trees drawn per forest tile (thick)
 -- MASSIVE and spread far apart so there's real open ocean to explore between
 -- them. Each one roughly hosts the matching port/city in src/data/ports.lua.
 config.ISLANDS = {
-    { x = 2600, y = 2600, radius = 1800 },  -- Bergen   (huge, NW)
-    { x = 6200, y = 2200, radius = 1100 },  -- Alversund (N-mid)
-    { x = 9600, y = 2600, radius = 1400 },  -- Florø    (NE)
-    { x = 7800, y = 4400, radius = 900  },  -- Hjellestad (center-E)
-    { x = 2600, y = 6000, radius = 1300 },  -- Lerøy    (SW)
-    { x = 5200, y = 6200, radius = 750  },  -- Klokkarvik (tiny, S-mid)
-    { x = 10000,y = 6200, radius = 1800 },  -- Oslo     (huge, SE)
+    { x = 2600, y = 2600, radius = 2520 },  -- Bergen   (huge, NW)
+    { x = 6200, y = 2200, radius = 1540 },  -- Alversund (N-mid)
+    { x = 9600, y = 2600, radius = 1960 },  -- Florø    (NE)
+    { x = 7800, y = 4400, radius = 1260 },  -- Hjellestad (center-E)
+    { x = 2600, y = 6000, radius = 1820 },  -- Lerøy    (SW)
+    { x = 5200, y = 6200, radius = 1050 },  -- Klokkarvik (tiny, S-mid)
+    { x = 10000,y = 6200, radius = 2520 },  -- Oslo     (huge, SE)
+    { x = 5100, y = 4300, radius = 1260 },  -- Florida  (big, central sea)
 }
 
 -- ── Fog of war (exploration) ───────────────────────────────────────────────
@@ -87,6 +88,27 @@ config.PICKUP_RADIUS  = 95    -- how close to a harbour the boat must get to doc
                               -- in front of the harbour; smaller = must arrive closer)
 config.BOAT_SPRITE_WIDTH = 140 -- on-screen width of the boat sprite (≈2 tiles)
 config.BOUNCE_DAMPING = 0.45  -- how soft collisions feel (0 = dead stop, 1 = bouncy)
+
+-- ── Pirate ship (rare, scary, but very dodge-able) ──────────────────────────
+-- A black-sailed AI ship that very occasionally comes hunting while you sail
+-- WITH gold aboard. It chases and lobs slow cannonballs (BOOM!); each hit costs
+-- a little gold. It's slower than you, so you can outrun it or duck behind an
+-- island — and docking at any harbour is always safe. If it takes all your gold
+-- (or you lose it for long enough) it gives up and sails off into the void.
+config.PIRATE = {
+    SPEED_FRAC    = 0.78,   -- pirate top speed as a fraction of YOUR boat's (close, but out-runnable)
+    SPAWN_GRACE   = 30,     -- seconds of eligible sailing before one can first appear
+    SPAWN_MEAN    = 70,     -- avg seconds of sailing between spawn rolls (higher = rarer)
+    RESPAWN_GRACE = 25,     -- quiet time after one leaves before another can come
+    FIRE_RANGE    = 720,    -- only fires within this distance (ground units)
+    FIRE_INTERVAL = 2.8,    -- seconds between cannon shots
+    BALL_SPEED    = 250,    -- cannonball speed — slow + telegraphed so it's easy to dodge
+    BALL_RADIUS   = 15,     -- hit radius of a cannonball
+    HIT_GOLD      = 5,      -- gold lost per hit
+    GIVEUP_DIST   = 2100,   -- if you stay this far away...
+    GIVEUP_TIME   = 9,      -- ...for this many seconds, the pirate loses interest
+    DESPAWN_DIST  = 1800,   -- while retreating, vanish once this far from you
+}
 
 -- ── Audio ───────────────────────────────────────────────────────────────
 config.MUSIC_VOLUME = 0.35

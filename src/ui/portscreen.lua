@@ -13,6 +13,7 @@
 
 local config = require("src.config")
 local Assets = require("src.assets")
+local Retro  = require("src.ui.retro")
 
 local PortScreen = {}
 PortScreen.__index = PortScreen
@@ -182,6 +183,7 @@ function PortScreen:keypressed(key)
 end
 
 function PortScreen:confirm()
+    local wasDeliver = (self.mode == "deliver")
     if self.mode == "offer" and self.offer then
         self.world.cargoSystem:tryPickup(self.world.boat, self.port)
         Assets.playSfx("horn")
@@ -189,23 +191,24 @@ function PortScreen:confirm()
     end
     Assets.stopDockMood()
     self.world.dock = nil
+
+    -- After the HURRA/celebration screen is closed, the harbour master pops up
+    -- the NEXT mission on its own — so the reward screen is never skipped, and
+    -- the child can keep sailing town to town.
+    if wasDeliver then
+        local off = self.world.cargoSystem:offerAt(self.port.id)
+        if off and self.world.boat:hasRoom() then
+            self.world:openDock(self.port)   -- straight into the next briefing
+        end
+    end
+    -- (The "casting off" beeps play in world.lua when the boat actually sails
+    -- away from the harbour, not here when the screen closes.)
 end
 
 -- ── Drawing ─────────────────────────────────────────────────────────────────
--- A chunky bevel: filled face, light edge top/left, dark edge bottom/right
--- (swap for a sunken look).
-local function bevel(x, y, w, h, face, hi, lo, t, raised)
-    if raised == nil then raised = true end
-    love.graphics.setColor(face); love.graphics.rectangle("fill", x, y, w, h)
-    local a, b = hi, lo
-    if not raised then a, b = lo, hi end
-    love.graphics.setColor(a)
-    love.graphics.rectangle("fill", x, y, w, t)
-    love.graphics.rectangle("fill", x, y, t, h)
-    love.graphics.setColor(b)
-    love.graphics.rectangle("fill", x, y + h - t, w, t)
-    love.graphics.rectangle("fill", x + w - t, y, t, h)
-end
+-- A chunky bevel (shared with the title screen): filled face, light edge
+-- top/left, dark edge bottom/right; swap for a sunken look.
+local bevel = Retro.bevel
 
 function PortScreen:draw()
     local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
@@ -338,10 +341,12 @@ function PortScreen:drawPortrait(L, t)
         self:drawHarborMaster(ix, iy, iw, ih)
     end
 
-    -- little "HAVNESJEF" (harbor master) name plate under the portrait
+    -- little "HAVNESJEF" (harbor master) name plate under the portrait.
+    -- If this town's data gives the master a name, show "Havnesjef <name>".
     local f = vfont(R.h * 0.075)
     love.graphics.setFont(f)
-    local label = "Havnesjef"
+    local master = self.port.def and self.port.def.master
+    local label = master and ("Havnesjef " .. master) or "Havnesjef"
     love.graphics.setColor(0, 0, 0, 0.5)
     love.graphics.print(label, R.x + R.w / 2 - f:getWidth(label) / 2 + 1, R.y + R.h - f:getHeight() - 3)
     love.graphics.setColor(th.accent)

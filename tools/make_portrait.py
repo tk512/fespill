@@ -15,7 +15,10 @@ import os, sys
 from PIL import Image
 
 SRC = sys.argv[1] if len(sys.argv) > 1 else "/Users/tk/tmp/papsen.png"
-OUT = os.path.join(os.path.dirname(__file__), "..", "assets", "ports", "portraits", "default.png")
+# argv[2] = output name (a port id like "hjellestad", or "default" for the
+# fallback harbour master used by every town without its own portrait).
+NAME = sys.argv[2] if len(sys.argv) > 2 else "default"
+OUT = os.path.join(os.path.dirname(__file__), "..", "assets", "ports", "portraits", NAME + ".png")
 WIDTH = 130       # small -> chunky pixels when scaled up in the well
 COLORS = 24       # palette size (lower = more retro banding)
 

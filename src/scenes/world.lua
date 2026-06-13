@@ -19,6 +19,7 @@ local CargoSystem  = require("src.systems.cargo")
 local Fog          = require("src.systems.fog")
 local Boat         = require("src.entities.boat")
 local Port         = require("src.entities.port")
+local Pirate       = require("src.entities.pirate")
 local HUD          = require("src.ui.hud")
 local PortScreen   = require("src.ui.portscreen")
 
@@ -80,6 +81,7 @@ function World:load(game)
     end
 
     self:spawnAmbientShips()
+    self:scatterAmbientBoats()
 
     self.cargoSystem = CargoSystem.new(self.ports)
 
@@ -94,6 +96,12 @@ function World:load(game)
     self.dock = nil          -- the docking screen overlay, when open
     self.dockSuppress = nil  -- port id we just left a dock for (don't re-pop)
     self.items = {}  -- reused render list (sorted each frame)
+
+    -- Pirate: none yet; can first appear after SPAWN_GRACE seconds of sailing
+    -- with gold aboard. (See updatePirate.)
+    self.pirate = nil
+    self.pirateCooldown = config.PIRATE.SPAWN_GRACE
+    Assets.stopChase()       -- clear any chase music left over from a prior run
 
     collectgarbage("collect")
 end
@@ -119,15 +127,47 @@ function World:scatterCity(port)
         end
     end
     table.sort(cands, function(a, b) return a.d < b.d end)
-    for k = 1, math.min(spec.houses, #cands) do
-        local c = cands[k]
-        self.objects:add({
-            tx = c.i, ty = c.j, z = 0, sprite = "props/house.png",
-            draw = function(_, g)
-                Objects.building(g.cx, g.cy, 16, 16, g.z, 22, 14,
-                    config.colors.building_wall, config.colors.building_dk)
-            end,
-        })
+
+    -- Landmark placeholders for this town (blocky stand-ins; drop a matching
+    -- PNG at assets/props/<sprite> later and it swaps in automatically). Which
+    -- ones a town gets depends on its size + what it produces.
+    local size = port.def.size or "small"
+    local big  = (size == "medium" or size == "large")
+    local fishing = port.def.produces and port.def.produces.mode == "cargo"
+    local marks = {}
+    if size ~= "tiny" then marks[#marks + 1] = { sprite = "props/church.png", fn = Objects.drawChurch } end
+    if big then marks[#marks + 1] = { sprite = "props/market.png", fn = Objects.drawMarket } end
+    if big then marks[#marks + 1] = { sprite = "props/crane.png",  fn = Objects.drawCrane } end
+    if fishing then marks[#marks + 1] = { sprite = "props/fishracks.png", fn = Objects.drawFishRacks } end
+
+    -- Place landmarks on nearby tiles (spaced a tile apart so they don't merge),
+    -- then fill the rest of the town with houses.
+    local taken = {}
+    for li, m in ipairs(marks) do
+        local idx = 1 + (li - 1) * 2
+        if idx <= #cands then
+            taken[idx] = true
+            local c = cands[idx]
+            local fn = m.fn
+            self.objects:add({
+                tx = c.i, ty = c.j, z = 0, sprite = m.sprite,
+                draw = function(_, g) fn(g) end,
+            })
+        end
+    end
+    local placed = 0
+    for k = 1, #cands do
+        if not taken[k] and placed < spec.houses then
+            placed = placed + 1
+            local c = cands[k]
+            self.objects:add({
+                tx = c.i, ty = c.j, z = 0, sprite = "props/house.png",
+                draw = function(_, g)
+                    Objects.building(g.cx, g.cy, 16, 16, g.z, 22, 14,
+                        config.colors.building_wall, config.colors.building_dk)
+                end,
+            })
+        end
     end
 end
 
@@ -163,6 +203,42 @@ function World:spawnAmbientShips()
                 draw = function(_, g)
                     local bob = math.sin(love.timer.getTime() * 1.2 + phase) * 2
                     Objects.drawShip(g.cx, g.cy, ang, col, 1.0, bob)
+                end,
+            })
+        end
+    end
+end
+
+-- Scatter idle boats of all sizes around the open sea — big freighters, little
+-- dinghies — just bobbing, doing nothing, to make the world feel alive. They're
+-- placed on water tiles with water all around (so none are jammed onto a coast).
+function World:scatterAmbientBoats(count)
+    count = count or 18
+    local T = config.TILE
+    local W, H = config.WORLD_WIDTH, config.WORLD_HEIGHT
+    local function openWater(gx, gy)
+        return self.terrain:isWater(gx, gy)
+            and self.terrain:isWater(gx + 70, gy) and self.terrain:isWater(gx - 70, gy)
+            and self.terrain:isWater(gx, gy + 70) and self.terrain:isWater(gx, gy - 70)
+    end
+    local placed, tries = 0, 0
+    while placed < count and tries < 600 do
+        tries = tries + 1
+        local gx, gy = love.math.random() * W, love.math.random() * H
+        -- keep them away from the player's starting spot so they don't crowd it
+        local sdx, sdy = gx - self.boat.x, gy - self.boat.y
+        if (sdx * sdx + sdy * sdy) > (600 * 600) and openWater(gx, gy) then
+            placed = placed + 1
+            local scale = 0.55 + love.math.random() * 1.05   -- tiny dinghy .. big freighter
+            local col   = config.SHIP_COLORS[love.math.random(#config.SHIP_COLORS)]
+            local ang   = love.math.random() * math.pi * 2
+            local phase = love.math.random() * 6.28
+            local rate  = 0.8 + love.math.random() * 0.7      -- each bobs at its own pace
+            self.objects:add({
+                tx = math.floor(gx / T) + 1, ty = math.floor(gy / T) + 1, z = 0,
+                draw = function(_, g)
+                    local bob = math.sin(love.timer.getTime() * rate + phase) * 2
+                    Objects.drawShip(g.cx, g.cy, ang, col, scale, bob)
                 end,
             })
         end
@@ -216,8 +292,15 @@ function World:update(dt)
             self._latchT = 0
         end
     else
-        self.dockSuppress = nil  -- left all ports; allow docking again
+        -- The boat has sailed out of range of the harbour it just visited:
+        -- that's "casting off" — play the three beeps once.
+        if self.dockSuppress then
+            Assets.playSfx("leave", 0.8)   -- loud, but a touch under full
+            self.dockSuppress = nil        -- allow docking here again next time
+        end
     end
+
+    self:updatePirate(dt)
 
     self.camera:edgeScroll(dt)   -- push mouse to screen edge to scroll
     self.camera:update(dt)
@@ -248,11 +331,82 @@ function World:isDiscovered(id)
     return false
 end
 
+-- ── Pirate encounters ──────────────────────────────────────────────────────
+-- Rare while sailing the open sea WITH gold to lose. Once one is hunting we run
+-- its AI; it despawns when it gives up / is shaken off, freeing a respawn timer.
+function World:updatePirate(dt)
+    if self.pirate then
+        self.pirate:update(dt, self.boat, self.terrain, function() self:pirateHit() end)
+        if self.pirate.dead then
+            self.pirate = nil
+            self.pirateCooldown = config.PIRATE.RESPAWN_GRACE
+            Assets.stopChase()
+        end
+        return
+    end
+
+    -- only roll for a spawn while actually sailing open water with gold aboard
+    local eligible = self.game.state.coins > 0 and not self.latching and not self.dock
+        and self.boat.speed > self.boat.maxSpeed * 0.3
+    if not eligible then return end
+    self.pirateCooldown = self.pirateCooldown - dt
+    if self.pirateCooldown <= 0 and love.math.random() < dt / config.PIRATE.SPAWN_MEAN then
+        self:spawnPirate()
+    end
+end
+
+function World:spawnPirate()
+    -- find open water to appear on: sweep several distance rings (preferring a
+    -- dramatic ~1200 away, falling back closer) × many angles, so it reliably
+    -- finds the sea even when the boat is in a pocket between the big islands.
+    local b = self.boat
+    local px, py
+    for _, r in ipairs({ 1200, 1000, 850, 700, 1350, 560 }) do
+        for k = 0, 11 do
+            local ang = (k / 12) * math.pi * 2 + love.math.random() * 0.52
+            local x = b.x + math.cos(ang) * r
+            local y = b.y + math.sin(ang) * r
+            if x > 40 and y > 40 and x < config.WORLD_WIDTH - 40 and y < config.WORLD_HEIGHT - 40
+                and self.terrain:isWater(x, y) then
+                px, py = x, y; break
+            end
+        end
+        if px then break end
+    end
+    if not px then return end          -- nowhere clear to appear; try again next roll
+    self.pirate = Pirate.new(px, py, self.boat.maxSpeed)
+    self.pirate.angle = math.atan2(self.boat.y - py, self.boat.x - px)
+    Assets.playSfx("pirate_warn", 0.95)
+    Assets.startChase()
+    self:showToast("Sjørøvere!")
+end
+
+-- A cannonball struck the boat: lose a little gold (never below zero), shake the
+-- screen, and — if you're now broke — the pirate gives up and sails off.
+function World:pirateHit()
+    local loss = math.min(config.PIRATE.HIT_GOLD, self.game.state.coins)
+    if loss > 0 then self.game:addCoins(-loss) end
+    Assets.playSfx("cannon_hit", 0.8)
+    self.camera:addShake(10)
+    if self.game.state.coins <= 0 and self.pirate then
+        self.pirate:flee()
+        self:showToast("Sjørøveren drar!")     -- nothing left to steal → it leaves
+    else
+        self:showToast("-" .. loss .. " gull!")
+    end
+end
+
 -- Dock at a port and pop the docking screen. Decides what the screen shows:
 --   deliver  — we're carrying passengers/goods bound for this town (gold!)
 --   offer    — this town has a job and the boat has room
 --   visit    — nothing to do right now (friendly hello)
 function World:openDock(port)
+    -- Harbours are always safe: any hunting pirate breaks off when you dock.
+    if self.pirate then
+        self.pirate = nil
+        self.pirateCooldown = config.PIRATE.RESPAWN_GRACE
+        Assets.stopChase()
+    end
     self.boat:clearDestination()   -- stop nudging while we're parked
 
     local earned, delivered = self.cargoSystem:tryDeliver(self.boat, port)
@@ -290,8 +444,37 @@ function World:draw()
 
     HUD.draw(self)
 
-    if not self.dock then self:drawMissionPointer() end  -- "go this way!" hint
+    if not self.dock then
+        self:drawMissionPointer()    -- "go this way!" hint
+        self:drawPirateIndicator()   -- red "danger this way!" arrow when off-screen
+    end
     if self.dock then self.dock:draw() end   -- docking modal on top of everything
+end
+
+-- When a hunting pirate is off-screen, pin a pulsing red arrow to the screen
+-- edge pointing at it, so the child knows which way the danger is (to flee).
+function World:drawPirateIndicator()
+    if not self.pirate then return end
+    local sw, sh = love.graphics.getDimensions()
+    local px, py = self.camera:worldToScreen(self.pirate.x, self.pirate.y)
+    local margin = 48
+    if px >= 0 and px <= sw and py >= 0 and py <= sh then return end  -- visible: no arrow
+
+    local cx, cy = sw / 2, sh / 2
+    local ang = math.atan2(py - cy, px - cx)
+    local ex = math.max(margin, math.min(sw - margin, px))
+    local ey = math.max(margin, math.min(sh - margin, py))
+    local pulse = 0.65 + 0.35 * math.sin(love.timer.getTime() * 8)
+
+    love.graphics.push()
+    love.graphics.translate(ex, ey)
+    love.graphics.rotate(ang)
+    love.graphics.setColor(0.10, 0, 0, 0.55)
+    love.graphics.polygon("fill", -18, -13, 16, 0, -18, 13)
+    love.graphics.setColor(0.88, 0.12, 0.10, pulse)
+    love.graphics.polygon("fill", -13, -9, 13, 0, -13, 9)
+    love.graphics.pop()
+    love.graphics.setColor(1, 1, 1)
 end
 
 function World:portById(id)
@@ -317,26 +500,40 @@ function World:drawMissionPointer()
     -- pulsing ring on the target town (if it's on screen)
     local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
     if tx > 0 and tx < sw and ty > 0 and ty < sh then
-        local pr = 26 + math.sin(t * 4) * 6
-        love.graphics.setColor(m.color[1], m.color[2], m.color[3], 0.9)
-        love.graphics.setLineWidth(4)
-        love.graphics.circle("line", tx, ty, pr)
+        local pr = 30 + math.sin(t * 4) * 7
+        love.graphics.setColor(0, 0, 0, 0.5)
+        love.graphics.setLineWidth(7); love.graphics.circle("line", tx, ty, pr)
+        love.graphics.setColor(m.color[1], m.color[2], m.color[3], 0.95)
+        love.graphics.setLineWidth(4); love.graphics.circle("line", tx, ty, pr)
         love.graphics.setLineWidth(1)
     end
 
-    -- the pointing arrow, hovering just above the boat, bobbing toward target
-    local hx, hy = bx, by - 70 + math.sin(t * 3) * 6
-    local s = 1 + 0.08 * math.sin(t * 5)
+    -- A big, bold pointing arrow hovering above the boat, bobbing toward the
+    -- target. A plain arrow — straight shaft + one clean triangular head — reads
+    -- far more clearly than anything fancy. Thick dark outline so it pops.
+    local hx, hy = bx, by - 88 + math.sin(t * 3) * 7
+    local s = (1 + 0.07 * math.sin(t * 5)) * 1.4
     love.graphics.push()
     love.graphics.translate(hx, hy)
     love.graphics.rotate(ang)
     love.graphics.scale(s, s)
-    local arrow = { -22, -8, 6, -8, 6, -18, 34, 0, 6, 18, 6, 8, -22, 8 }
-    love.graphics.setColor(0.10, 0.08, 0.05, 0.9)        -- dark outline
-    love.graphics.setLineWidth(6)
-    love.graphics.polygon("line", arrow)
-    love.graphics.setColor(0.98, 0.82, 0.25)             -- bright gold
+    -- canonical arrow pointing +x (tip → head corners → shaft → tail)
+    local arrow = {
+         34,   0,   -- tip
+         14, -20,   -- head top corner
+         14,  -8,   -- step in to shaft
+        -30,  -8,   -- shaft tail top
+        -30,   8,   -- shaft tail bottom
+         14,   8,   -- step out
+         14,  20,   -- head bottom corner
+    }
+    love.graphics.setColor(0, 0, 0, 0.28)                -- soft drop shadow
+    love.graphics.push(); love.graphics.translate(3, 4)
+    love.graphics.polygon("fill", arrow); love.graphics.pop()
+    love.graphics.setColor(0.99, 0.83, 0.22)             -- bright gold fill
     love.graphics.polygon("fill", arrow)
+    love.graphics.setColor(0.10, 0.08, 0.05)             -- thick dark outline
+    love.graphics.setLineWidth(6); love.graphics.polygon("line", arrow)
     love.graphics.setLineWidth(1)
     love.graphics.pop()
     love.graphics.setColor(1, 1, 1)
@@ -424,14 +621,19 @@ function World:drawWorldSorted()
     if self.boat.destX then entry(Iso.depth(self.boat.destX, self.boat.destY), "dest", nil) end
     for vi = 1, #vis do entry(vis[vi].depth, "object", vis[vi]) end
     entry(Iso.depth(self.boat.x, self.boat.y), "boat", nil)
+    if self.pirate then entry(Iso.depth(self.pirate.x, self.pirate.y), "pirate", nil) end
     for k = #objs, no + 1, -1 do objs[k] = nil end
     table.sort(objs, byDepth)
     for k = 1, no do
         local it = objs[k]
         if it.kind == "object" then Objects.draw(it.obj)
         elseif it.kind == "boat" then self.boat:draw()
+        elseif it.kind == "pirate" then self.pirate:draw()
         elseif it.kind == "dest" then self:drawDestinationMarker() end
     end
+
+    -- cannonballs arc above everything in the world (still camera-attached)
+    if self.pirate then self.pirate:drawBalls() end
     love.graphics.setColor(1, 1, 1)
 end
 
