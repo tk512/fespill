@@ -1,83 +1,35 @@
-> NOTE: This game is in Norwegian, made for my son 🇳🇴
-
 # Båtspillet 🚤
 
-Et lite båtspill for barn (laget for min egen gutt). 
+![Båtspillet](skjermbilde.png)
 
----
+Et båtspill jeg har laget til gutten min, Finn-Erik (5). Du seiler rundt mellom 
+byer, frakter passasjerer og annen last og tjener gullmynter.
 
-## Slik starter du spillet
+## Start spillet
 
-Enklest: **dobbeltklikk på `Båtspillet.command`** (eksporter i Script Editor så har man en app)
-
-
-Spillet starter i fullskjerm. Trykk **F11** for å bytte mellom fullskjerm og
-vindu. (Vil du at det skal starte i vindu, sett `START_FULLSCREEN = false` i
-`src/config.lua`.)
-
----
+Last ned **Båtspillet.dmg** fra [Releases](https://github.com/tk512/fespill/releases),
+åpne den og dra spillet over i Applications-katalogen. Første gang må du høyreklikke på
+spillet og velge **Åpne** (det er ikke signert, så du må kanskje inn i 
+Innstillinger -> Personvern -> "Åpne likevel").  Eller bare kjør spillet i LÖVE2D med .love filen.
 
 ## Kontroller
 
-| Knapp | Hva den gjør |
-|-------|--------------|
-| **Klikk på vannet** | Båten seiler dit |
-| **Piltaster / WASD** | Styr båten selv |
-| **Mus mot skjermkanten** | Flytt kartet |
-| **Høyreklikk + dra** | Flytt kartet |
-| **Musehjul** | Zoom inn / ut |
-| **C** | Sentrer kameraet på båten |
-| **MELLOMROM** | Last / lever varer i havna |
-| **ESC** | Tilbake til menyen |
+| Knapp | Hva|
+|-------|-----------|
+| Klikk på vannet | Båten seiler dit |
+| Piltaster / WASD | Styr båten selv |
+| Mus mot kanten, eller høyreklikk + dra | Flytt kartet |
+| C | Sentrer kameraet på båten |
+| M | Lyd av/på |
+| ESC | Tilbake til menyen |
 
----
+## Sånn spiller du
 
-## Slik spiller du
+Seil bort til en havn, så legger båten til av seg 
+selv. Havnesjefen gir deg et oppdrag ... kanskje 
+noen passasjerer, fisk osv. En pil over båten 
+viser hvilken by du skal til.
 
-1. Trykk **Enter** eller klikk **«Seil ut!»** i menyen.
-2. Seil til en havn (klikk på vannet, eller bruk piltastene).
-3. Når båten er nær havna, trykk **MELLOMROM** for å laste varer.
-4. Lasten viser hvilken havn den skal til. Seil dit og trykk **MELLOMROM** for
-   å levere – da får du **gull**.
-5. Seil nær øyene for å **oppdage** dem.
+## ⚠️ Sjørøvere.... HIV OG HOI!
 
-Alt er snilt: båten synker aldri, den dulter mykt borti land, og du kan ikke
-tape.
-
----
-
-## Utviklertaster
-
-| Tast | Handling |
-|------|----------|
-| **F5** | Last scenen på nytt (rask omstart) |
-| **F6** | Last datafilene på nytt (`boats.lua`, `ports.lua`) |
-| **F11** | Fullskjerm av/på |
-| **M** | Lyd av/på |
-
----
-
-## Legge til og endre innhold
-
-- **Ny båt eller havn:** rediger `src/data/boats.lua` eller
-  `src/data/ports.lua`, og trykk **F6** i spillet. Ingen koding nødvendig.
-- **Endre følelsen** (fart, zoom, farger, kart): rediger `src/config.lua`.
-- **Bytte ut grafikken:** legg PNG-filer i `assets/` (se `assets/README.md`).
-  Spillet tegner enkle plassholdere helt til du legger inn ekte bilder.
-
----
-
-## Lagring
-
-Spillet lagrer automatisk (gull, opplåste båter og oppdagede øyer). Filen ligger
-her – ikke i selve spillmappa:
-
-```
-~/Library/Application Support/LOVE/batspillet/savegame.json
-```
-
----
-
-## Teknisk (kort)
-
-- Laget for LÖVE **11.3**. Fungerer også på gamle Mac-er
+Av og til, når du har gull om bord, dukker det opp et svart sjørøverskip som jager deg. 
