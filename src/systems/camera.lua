@@ -62,8 +62,10 @@ function Camera:panScreen(sx, sy)
     self:clamp()
 end
 
--- Scroll when the cursor is within EDGE pixels of a screen border.
-function Camera:edgeScroll(dt)
+-- Scroll when the cursor is within EDGE pixels of a screen border. If an anchor
+-- (the boat) is given, the drift is capped so the boat can't scroll off-screen —
+-- a kid who leaves the mouse parked at an edge just nudges the view a little.
+function Camera:edgeScroll(dt, anchorX, anchorY)
     if not love.window.hasFocus() then return end
     local mx, my = love.mouse.getPosition()
     local w, h = love.graphics.getDimensions()
@@ -74,7 +76,25 @@ function Camera:edgeScroll(dt)
     if sx ~= 0 or sy ~= 0 then
         local step = config.EDGE_SCROLL_SPEED * dt
         self:panScreen(sx * step, sy * step)
+        if anchorX then self:keepAnchorInView(anchorX, anchorY) end
     end
+end
+
+-- Pull the camera back so the anchor point (the boat) stays within the central
+-- band of the screen. Works in iso "u = gx-gy, v = gx+gy" space, where the
+-- boat's screen offset from centre is a clean linear function of each — so we
+-- just clamp u and v independently. Resolution- and zoom-independent.
+function Camera:keepAnchorInView(bx, by)
+    local w, h = love.graphics.getDimensions()
+    local keep = config.EDGE_SCROLL_KEEP or 0.34
+    local maxU = (w * keep) / (Iso.SX * self.zoom)   -- screen X offset uses (gx-gy)*SX
+    local maxV = (h * keep) / (Iso.SY * self.zoom)   -- screen Y offset uses (gx+gy)*SY
+    local bu, bv = bx - by, bx + by
+    local u = math.max(bu - maxU, math.min(bu + maxU, self.gx - self.gy))
+    local v = math.max(bv - maxV, math.min(bv + maxV, self.gx + self.gy))
+    self.gx = (u + v) / 2
+    self.gy = (v - u) / 2
+    self:clamp()
 end
 
 -- Right-drag panning: move the map under the cursor.

@@ -183,24 +183,32 @@ end
 -- A THICK forest tile: many overlapping trees filling the tile, so that
 -- neighbouring forest tiles blend into one dense woodland. `salt` makes the
 -- layout deterministic (stable across reloads) without Math.random.
+-- Tree layouts are deterministic per tile (keyed by `salt`) and never change, so
+-- compute each one ONCE and cache it. Rebuilding the table + sorting it every
+-- frame for every visible forest tile was a big source of GC churn.
+local forestCache = {}
+
 function Objects.drawForest(g, salt)
     local c = config.colors
     local z = g.z or 0
-    local s = (salt or 1) % 100000
-    local function rnd()
-        s = (s * 1103515245 + 12345) % 2147483648
-        return s / 2147483648
+    local trees = forestCache[salt]
+    if not trees then
+        local s = (salt or 1) % 100000
+        local function rnd()
+            s = (s * 1103515245 + 12345) % 2147483648
+            return s / 2147483648
+        end
+        -- pick tree positions inside the tile, then sort back-to-front so nearer
+        -- trees overlap the ones behind them (proper little canopy)
+        trees = {}
+        for k = 1, config.FOREST_DENSITY do
+            local gx = g.gx0 + rnd() * (g.gx1 - g.gx0)
+            local gy = g.gy0 + rnd() * (g.gy1 - g.gy0)
+            trees[k] = { gx, gy, 0.85 + rnd() * 0.5 }
+        end
+        table.sort(trees, function(a, b) return (a[1] + a[2]) < (b[1] + b[2]) end)
+        forestCache[salt] = trees
     end
-
-    -- pick tree positions inside the tile, then sort back-to-front so nearer
-    -- trees overlap the ones behind them (proper little canopy)
-    local trees = {}
-    for k = 1, config.FOREST_DENSITY do
-        local gx = g.gx0 + rnd() * (g.gx1 - g.gx0)
-        local gy = g.gy0 + rnd() * (g.gy1 - g.gy0)
-        trees[k] = { gx, gy, 0.85 + rnd() * 0.5 }
-    end
-    table.sort(trees, function(a, b) return (a[1] + a[2]) < (b[1] + b[2]) end)
 
     for _, t in ipairs(trees) do
         local sx, sy = Iso.project(t[1], t[2], z)
@@ -333,13 +341,12 @@ end
 
 -- A small isometric ship (volumetric hull + cabin), oriented by `angle`.
 -- Reused for docked ships in harbors and ambient ships at sea. `scale` ~1.0.
+local SHIP_HULL = { { 22, 0 }, { 8, -11 }, { -16, -11 }, { -20, 0 }, { -16, 11 }, { 8, 11 } }
 function Objects.drawShip(gx, gy, angle, color, scale, z)
     scale = scale or 1
     z = z or 0
     local c = config.colors
-    local hull = {
-        { 22,  0 }, { 8, -11 }, { -16, -11 }, { -20, 0 }, { -16, 11 }, { 8, 11 },
-    }
+    local hull = SHIP_HULL          -- shared constant, not rebuilt every call
     local function rot(px, py)
         local co, si = math.cos(angle), math.sin(angle)
         return gx + (px * co - py * si) * scale, gy + (px * si + py * co) * scale

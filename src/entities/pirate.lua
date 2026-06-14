@@ -117,41 +117,77 @@ function Pirate:fire(boat)
     local tx = boat.x + bvx * plan * 0.8        -- partial lead (so it's still dodge-able)
     local ty = boat.y + bvy * plan * 0.8
     local ang = math.atan2(ty - self.y, tx - self.x)
-    local mx = self.x + math.cos(self.angle) * 30   -- fire from the bow
-    local my = self.y + math.sin(self.angle) * 30
+    local bowOff = 32 * (P.LENGTH or 2.6)           -- fire from the (long) bow
+    local mx = self.x + math.cos(self.angle) * bowOff
+    local my = self.y + math.sin(self.angle) * bowOff
     self.balls[#self.balls + 1] = {
         x = mx, y = my,
         vx = math.cos(ang) * P.BALL_SPEED, vy = math.sin(ang) * P.BALL_SPEED,
         life = 0, plan = plan,
     }
     self.muzzle = 0.14
-    Assets.playSfx("cannon", 0.85)
+    Assets.playSfx("cannon", 0.97)
 end
 
 -- ── Drawing (isometric) ─────────────────────────────────────────────────────
-local HULL = { { 26, 0 }, { 10, -13 }, { -20, -13 }, { -26, 0 }, { -20, 13 }, { 10, 13 } }
+-- Scale mostly the LENGTH (local +x = bow→stern), a little the WIDTH (y), and
+-- keep the height/rig moderate — so it reads as a long, low, menacing galleon
+-- rather than a tower.
+local LEN = config.PIRATE.LENGTH or 2.6
+local WID = config.PIRATE.WIDTH or 1.45
+-- a longer hull silhouette (drawn-out bow + stern), in local boat space
+local HULL = { { 30, 0 }, { 12, -12 }, { -22, -12 }, { -30, 0 }, { -22, 12 }, { 12, 12 } }
+
+-- A tattered black sail (screen-space billboard) with a ragged, torn bottom.
+local function draggedSail(cx, topY, halfW, h)
+    local poly = {
+        cx - halfW, topY,
+        cx + halfW, topY,
+        cx + halfW, topY + h,
+        cx + halfW * 0.55, topY + h - h * 0.16,
+        cx + halfW * 0.15, topY + h,
+        cx - halfW * 0.22, topY + h - h * 0.18,
+        cx - halfW * 0.6, topY + h,
+        cx - halfW, topY + h - h * 0.12,
+    }
+    love.graphics.setColor(0.12, 0.12, 0.15); love.graphics.polygon("fill", poly)
+    love.graphics.setColor(0.07, 0.07, 0.09)                 -- a couple of dark tear seams
+    love.graphics.setLineWidth(2)
+    love.graphics.line(cx - halfW * 0.3, topY + 2, cx - halfW * 0.35, topY + h * 0.8)
+    love.graphics.line(cx + halfW * 0.35, topY + 2, cx + halfW * 0.3, topY + h * 0.85)
+    love.graphics.setLineWidth(1)
+end
 
 function Pirate:draw()
     local t = love.timer.getTime()
-    local z = math.sin(t * 1.6) * 2                  -- gentle bob
+    local z = math.sin(t * 1.6) * 2
     local co, si = math.cos(self.angle), math.sin(self.angle)
-    local function rot(px, py) return self.x + (px * co - py * si), self.y + (px * si + py * co) end
+    -- length on +x, beam on y, then rotate by heading
+    local function rot(px, py)
+        local lx, ly = px * LEN, py * WID
+        return self.x + (lx * co - ly * si), self.y + (lx * si + ly * co)
+    end
 
+    local hullH = 17                                  -- moderate freeboard (not tall)
     local base, deck = {}, {}
+    local minx, miny, maxx, maxy = 1e9, 1e9, -1e9, -1e9
     for _, p in ipairs(HULL) do
         local wx, wy = rot(p[1], p[2])
         local bx, by = Iso.project(wx, wy, z)
-        local dx, dy = Iso.project(wx, wy, z + 14)
+        local dx, dy = Iso.project(wx, wy, z + hullH)
         base[#base + 1] = { bx, by }
         deck[#deck + 1] = { dx, dy }
+        if bx < minx then minx = bx end; if bx > maxx then maxx = bx end
+        if by < miny then miny = by end; if by > maxy then maxy = by end
     end
 
-    local sxc, syc = Iso.project(self.x, self.y, 0)
-    love.graphics.setColor(0, 0, 0, 0.20)
-    love.graphics.ellipse("fill", sxc, syc + 4, 30, 15)
+    -- long looming shadow matching the hull footprint
+    love.graphics.setColor(0, 0, 0, 0.22)
+    love.graphics.ellipse("fill", (minx + maxx) / 2, (miny + maxy) / 2 + 5,
+        (maxx - minx) / 2 + 6, (maxy - miny) / 2 + 5)
 
-    -- dark hull sides + deck
-    love.graphics.setColor(0.16, 0.11, 0.08)
+    -- near-black hull sides + deck
+    love.graphics.setColor(0.12, 0.08, 0.06)
     local n = #base
     for i = 1, n do
         local a, b = i, (i % n) + 1
@@ -160,33 +196,59 @@ function Pirate:draw()
     end
     local poly = {}
     for i = 1, n do poly[#poly + 1] = deck[i][1]; poly[#poly + 1] = deck[i][2] end
-    love.graphics.setColor(0.26, 0.18, 0.12); love.graphics.polygon("fill", poly)
-    love.graphics.setColor(0.10, 0.07, 0.05); love.graphics.polygon("line", poly)
+    love.graphics.setColor(0.22, 0.15, 0.10); love.graphics.polygon("fill", poly)
+    love.graphics.setColor(0.55, 0.12, 0.10)                 -- blood-red trim line
+    love.graphics.setLineWidth(3); love.graphics.polygon("line", poly)
+    love.graphics.setLineWidth(1)
 
-    -- mast + tattered black sail with a skull (screen-space billboard)
-    local mx, my = Iso.project(self.x, self.y, z + 14)
-    love.graphics.setColor(0.10, 0.07, 0.05)
-    love.graphics.setLineWidth(3); love.graphics.line(mx, my, mx, my - 54); love.graphics.setLineWidth(1)
-    love.graphics.setColor(0.13, 0.13, 0.16)
-    love.graphics.polygon("fill", mx - 21, my - 47, mx + 21, my - 47, mx + 16, my - 14, mx - 16, my - 14)
-    -- skull
-    love.graphics.setColor(0.86, 0.86, 0.9); love.graphics.circle("fill", mx, my - 33, 6)
-    love.graphics.setColor(0.10, 0.10, 0.13)
-    love.graphics.circle("fill", mx - 2.4, my - 34, 1.5); love.graphics.circle("fill", mx + 2.4, my - 34, 1.5)
-    love.graphics.rectangle("fill", mx - 2, my - 29, 4, 2)
-    -- a little skull-and-crossbones flag at the top
-    love.graphics.setColor(0.06, 0.06, 0.07)
-    love.graphics.polygon("fill", mx, my - 54, mx + 17, my - 51, mx, my - 47)
-    love.graphics.setColor(0.85, 0.85, 0.9); love.graphics.circle("fill", mx + 7, my - 51, 1.6)
+    -- a row of gun ports down each long side (edges 2→3 port, 5→6 starboard)
+    local function gunports(p, q)
+        for k = 1, 4 do
+            local f = (k - 0.5) / 4
+            local px = deck[p][1] + (deck[q][1] - deck[p][1]) * f
+            local py = deck[p][2] + (deck[q][2] - deck[p][2]) * f
+            love.graphics.setColor(0.03, 0.02, 0.02); love.graphics.circle("fill", px, py, 3)
+            love.graphics.setColor(0.7, 0.14, 0.08, 0.7); love.graphics.circle("fill", px, py, 1.3)
+        end
+    end
+    gunports(2, 3); gunports(6, 5)
 
-    -- muzzle flash + smoke just after firing
+    -- main mast + tattered sail with a glowing-eyed skull (moderate height)
+    local mx, my = Iso.project(self.x, self.y, z + hullH)
+    love.graphics.setColor(0.08, 0.06, 0.04)
+    love.graphics.setLineWidth(4); love.graphics.line(mx, my, mx, my - 60)
+    love.graphics.setLineWidth(3); love.graphics.line(mx - 28, my - 50, mx + 28, my - 50)  -- yard-arm
+    love.graphics.setLineWidth(1)
+    draggedSail(mx, my - 50, 26, 38)
+
+    local skx, sky, sr = mx, my - 31, 8
+    love.graphics.setColor(0.88, 0.87, 0.9); love.graphics.circle("fill", skx, sky, sr)
+    love.graphics.setColor(0.82, 0.81, 0.84)
+    love.graphics.polygon("fill", skx - sr * 0.7, sky + sr * 0.5, skx + sr * 0.7, sky + sr * 0.5,
+        skx + sr * 0.35, sky + sr * 1.25, skx - sr * 0.35, sky + sr * 1.25)   -- jaw
+    local glow = 0.55 + 0.45 * math.sin(t * 6)
+    love.graphics.setColor(0.5, 0.05, 0.04)
+    love.graphics.circle("fill", skx - sr * 0.4, sky - sr * 0.1, sr * 0.36)
+    love.graphics.circle("fill", skx + sr * 0.4, sky - sr * 0.1, sr * 0.36)
+    love.graphics.setColor(1, 0.2, 0.12, glow)               -- glowing red eyes
+    love.graphics.circle("fill", skx - sr * 0.4, sky - sr * 0.1, sr * 0.17)
+    love.graphics.circle("fill", skx + sr * 0.4, sky - sr * 0.1, sr * 0.17)
+    love.graphics.setColor(0.10, 0.08, 0.10)
+    love.graphics.rectangle("fill", skx - sr * 0.18, sky + sr * 0.32, sr * 0.36, sr * 0.5)  -- nose
+
+    -- skull-and-crossbones flag streaming from the masthead
+    love.graphics.setColor(0.05, 0.05, 0.06)
+    love.graphics.polygon("fill", mx, my - 60, mx + 22, my - 56, mx, my - 52)
+    love.graphics.setColor(0.82, 0.82, 0.88); love.graphics.circle("fill", mx + 8, my - 56, 2)
+
+    -- muzzle flash + smoke just after firing (at the bow)
     if self.muzzle > 0 then
         local bx, by = rot(30, 0)
-        local fx, fy = Iso.project(bx, by, z + 6)
-        local s = self.muzzle / 0.14
-        love.graphics.setColor(0.72, 0.72, 0.72, s * 0.5); love.graphics.circle("fill", fx, fy - 3, 9 * s)
-        love.graphics.setColor(1, 0.78, 0.30, s); love.graphics.circle("fill", fx, fy, 10 * s)
-        love.graphics.setColor(1, 0.5, 0.12, s * 0.85); love.graphics.circle("fill", fx, fy, 6 * s)
+        local fx, fy = Iso.project(bx, by, z + 8)
+        local f = self.muzzle / 0.14
+        love.graphics.setColor(0.72, 0.72, 0.72, f * 0.5); love.graphics.circle("fill", fx, fy - 4, 12 * f)
+        love.graphics.setColor(1, 0.78, 0.30, f); love.graphics.circle("fill", fx, fy, 13 * f)
+        love.graphics.setColor(1, 0.45, 0.10, f * 0.85); love.graphics.circle("fill", fx, fy, 8 * f)
     end
     love.graphics.setColor(1, 1, 1)
 end

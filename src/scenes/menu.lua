@@ -4,7 +4,7 @@
 -- dithered pixel sky, a blocky pixel sun and pixel-art islands on the horizon.
 -- The words "Velkommen til Båtspillet!" still bounce in one letter at a time and
 -- a recorded voice (my kid) says it once; a water splash erupts on cue. The
--- "Hiv og hoi!" button is a carved wooden harbour SIGN hanging from two ropes,
+-- "Klar til å sette seil" button is a carved wooden harbour SIGN on two ropes,
 -- swaying gently. Works with keyboard (Enter/Space) and mouse (click the sign).
 
 local config = require("src.config")
@@ -77,7 +77,11 @@ function Menu:load(game)
 
     -- carved-sign label font, sized to the wooden plank
     local _, _, bw, bh = self:buttonRect()
-    self.signFont = fitFont("Hiv og hoi!", bw * 0.78, bh * 0.62)
+    self.signFont = fitFont("Klar til å sette seil", bw * 0.84, bh * 0.6)
+
+    -- The game's artist — my boy Finn-Erik — waves from the bottom-right corner.
+    self.artist = Assets.image("menu/finnerik.png")
+    if self.artist then self.artist:setFilter("nearest", "nearest") end  -- crisp retro pixels
 
     -- a few small pixel sailboats drifting across the sea band
     self.boats = {}
@@ -338,8 +342,8 @@ end
 -- testing the un-swayed rect is plenty accurate for a child.
 function Menu:buttonRect()
     local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
-    local bw = math.min(math.floor(sw * 0.32), 440)
-    local bh = math.floor(bw * 0.30)
+    local bw = math.min(math.floor(sw * 0.44), 600)   -- wide enough for the longer label
+    local bh = math.floor(bw * 0.22)
     return sw / 2 - bw / 2, math.floor(sh * 0.66), bw, bh
 end
 
@@ -487,6 +491,41 @@ function Menu:draw()
     local hint = "Trykk ENTER eller klikk for å starte   •   F11 = fullskjerm   •   M = lyd av/på"
     love.graphics.print(hint, sw / 2 - self.game.fonts.small:getWidth(hint) / 2, sh * 0.93)
 
+    self:drawArtist(sw, sh)   -- Finn-Erik, the game's artist, in the corner
+
+    love.graphics.setColor(1, 1, 1)
+end
+
+-- Credit the artist: my boy Finn-Erik peeking up from the bottom-right corner,
+-- in the same dithered retro style as the harbour masters.
+function Menu:drawArtist(sw, sh)
+    local img = self.artist
+    if not img then return end
+    local ih = sh * 0.34
+    local scale = ih / img:getHeight()
+    local iw = img:getWidth() * scale
+    local x = sw - sw * 0.015 - iw            -- left edge (anchored to the right)
+    local by = sh * 0.99                       -- his bottom near the screen bottom
+    local y = by - ih
+    local bob = math.sin(self.t * 1.6) * 4     -- gentle life
+
+    love.graphics.setColor(0, 0, 0, 0.16)
+    love.graphics.ellipse("fill", x + iw / 2, by - 2, iw * 0.40, 7)   -- soft shadow
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.draw(img, x, y + bob, 0, scale, scale)
+
+    -- "Spillkunstner / Finn-Erik" credit above his head
+    local cx = x + iw / 2
+    local fs, fn = self.game.fonts.small, self.game.fonts.normal
+    local function center(font, txt, yy, col)
+        love.graphics.setFont(font)
+        local w = font:getWidth(txt)
+        love.graphics.setColor(0, 0, 0, 0.5); love.graphics.print(txt, cx - w / 2 + 1, yy + 1)
+        love.graphics.setColor(col);          love.graphics.print(txt, cx - w / 2, yy)
+    end
+    local ly2 = (y + bob) - fn:getHeight() - 4
+    center(fs, "Spillkunstner", ly2 - fs:getHeight() - 1, WOOD.accent)
+    center(fn, "Finn-Erik (5)", ly2,                      WOOD.text)
     love.graphics.setColor(1, 1, 1)
 end
 
@@ -524,7 +563,7 @@ function Menu:drawSign(pop)
 
     -- carved label: light highlight underneath + dark engraved text on top
     love.graphics.setFont(self.signFont)
-    local label = "Hiv og hoi!"
+    local label = "Klar til å sette seil"
     local tw, th = self.signFont:getWidth(label), self.signFont:getHeight()
     local tx, ty = cx - tw / 2, by + bh / 2 - th / 2
     love.graphics.setColor(WOOD.hi[1], WOOD.hi[2], WOOD.hi[3], 0.8)
@@ -540,10 +579,11 @@ function Menu:pointInButton(mx, my)
     return mx >= bx and mx <= bx + bw and my >= by and my <= by + bh
 end
 
--- Leaving the menu early shouldn't leave the music ducked.
+-- Leaving the menu early shouldn't leave the music ducked. Go via the loading
+-- screen so the world's (briefly blocking) build happens behind a "Laster…".
 function Menu:start()
     Assets.setMusicVolume(1.0)
-    self.game:setScene("world")
+    self.game:setScene("loading")
 end
 
 function Menu:keypressed(key)

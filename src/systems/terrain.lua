@@ -11,6 +11,7 @@
 local config = require("src.config")
 local Iso    = require("src.systems.iso")
 local Assets = require("src.assets")
+local Loader = require("src.systems.loader")
 
 local Terrain = {}
 Terrain.__index = Terrain
@@ -47,11 +48,14 @@ function Terrain.new(ports)
     self.props = {}
     self.islandCenters = {}
 
+    self._ports = ports
     self:generateLand()          -- corner land/water flags (irregular coasts)
     self:snapPorts(ports)        -- place ports on the coast + mark their pads
     self:classifyTiles()         -- water / sand / grass / rock per tile
+    self:buildHeightfield()      -- per-tile elevation level (visual mountains)
     self:scatterProps()
     self:buildCoastMesh()        -- bake the jagged shoreline into one static mesh
+    self:buildLandMesh()         -- bake all full-land tiles (raised) into one mesh
 
     for i, isl in ipairs(config.ISLANDS) do
         self.islandCenters[i] = { x = isl.x, y = isl.y, radius = isl.radius, id = "island" .. i }
@@ -68,6 +72,7 @@ function Terrain:generateLand()
     for ci = 1, self.nx + 1 do
         self.corner[ci] = {}
         local gx = (ci - 1) * T
+        Loader.tick()
         for cj = 1, self.ny + 1 do
             local gy = (cj - 1) * T
             local mask = 0
@@ -161,6 +166,102 @@ function Terrain:snapPorts(ports)
     end
 end
 
+-- The combined island-mask value at a world point (1 at a centre, 0 past the
+-- radius) — same shape that carved the islands, reused to push elevation up
+-- toward each island's middle.
+function Terrain:islandMask(gx, gy)
+    local m = 0
+    for _, isl in ipairs(config.ISLANDS) do
+        local dx, dy = gx - isl.x, gy - isl.y
+        local d = math.sqrt(dx * dx + dy * dy) / isl.radius
+        if d < 1 then
+            local s = smooth(1 - d)
+            if s > m then m = s end
+        end
+    end
+    return m
+end
+
+-- Discrete-plateau terrain. (1) Each full-land tile gets an integer LEVEL from a
+-- very smooth field, so large contiguous PLATEAUS form. (2) Each grid CORNER's
+-- height = average of the levels of the tiles touching it × STEP, so plateau
+-- interiors are perfectly flat (all corners equal) and only the boundary tiles
+-- become smooth one-tile RAMPS up to the next level — no bumps, no walls.
+-- tile.level = plateau level; cz[ci][cj] = corner height; tile.z = avg height.
+function Terrain:buildHeightfield()
+    local T = config.TILE
+    local M = config.MOUNTAINS
+    local seed = config.WORLD_SEED
+
+    for i = 1, self.nx do
+        Loader.tick()
+        for j = 1, self.ny do
+            local tile = self.tiles[i][j]
+            tile.level = 0
+            if (not tile.water) and tile.land >= 4 and not tile.build then
+                local cx, cy = (i - 0.5) * T, (j - 0.5) * T
+                local mask = self:islandMask(cx, cy)
+                local shape = (mask - config.LAND_THRESH) / (1 - config.LAND_THRESH) -- 0 coast .. 1 centre
+                if shape < 0 then shape = 0 end
+                local n = fbm(cx / M.NOISE_SCALE, cy / M.NOISE_SCALE, seed + 300)    -- medium undulation
+                -- shape tapers height to 0 at the coast; the noise ripples the
+                -- interior so it terraces into many layers when quantized
+                local h = shape * (0.5 + 0.85 * n)
+                if h > 1 then h = 1 end
+                tile.level = math.floor(h * M.MAX_LEVEL + 0.001)
+            end
+        end
+    end
+
+    -- flatten the tiles in a disc around each town (level 0)
+    for _, port in ipairs(self._ports or {}) do
+        local R = M.FLATTEN_R
+        for di = -R, R do
+            for dj = -R, R do
+                if di * di + dj * dj <= R * R then
+                    local row = self.tiles[port.tx + di]
+                    local tl = row and row[port.ty + dj]
+                    if tl then tl.level = 0 end
+                end
+            end
+        end
+    end
+
+    -- corner height = average of the (up to 4) touching tile levels × STEP
+    local function tlvl(i, j)
+        local row = self.tiles[i]; local t = row and row[j]
+        return (t and t.level) or 0
+    end
+    self.cz = {}
+    for ci = 1, self.nx + 1 do
+        self.cz[ci] = {}
+        Loader.tick()
+        for cj = 1, self.ny + 1 do
+            local s = tlvl(ci - 1, cj - 1) + tlvl(ci, cj - 1) + tlvl(ci - 1, cj) + tlvl(ci, cj)
+            self.cz[ci][cj] = (s * 0.25) * M.STEP
+        end
+    end
+
+    -- per-tile average height (props / fog)
+    for i = 1, self.nx do
+        for j = 1, self.ny do
+            self.tiles[i][j].z =
+                (self.cz[i][j] + self.cz[i + 1][j] + self.cz[i + 1][j + 1] + self.cz[i][j + 1]) * 0.25
+        end
+    end
+end
+
+-- Height (world-units) of a grid corner / a tile's average (0 out of range).
+function Terrain:cornerZ(ci, cj)
+    local row = self.cz and self.cz[ci]
+    return (row and row[cj]) or 0
+end
+function Terrain:tileZ(i, j)
+    local row = self.tiles[i]
+    local t = row and row[j]
+    return (t and t.z) or 0
+end
+
 -- Classify each tile from its corner land flags + a land-cover noise.
 function Terrain:classifyTiles()
     local T = config.TILE
@@ -168,6 +269,7 @@ function Terrain:classifyTiles()
     self.tiles = {}
     for i = 1, self.nx do
         self.tiles[i] = {}
+        Loader.tick()
         for j = 1, self.ny do
             local land = self.corner[i][j] + self.corner[i + 1][j]
                        + self.corner[i + 1][j + 1] + self.corner[i][j + 1]
@@ -208,6 +310,7 @@ function Terrain:scatterProps()
     local T = config.TILE
     local seed = config.WORLD_SEED
     for i = 1, self.nx do
+        Loader.tick()
         for j = 1, self.ny do
             local t = self.tiles[i][j]
             if not t.water and not t.build then
@@ -273,13 +376,12 @@ function Terrain:drawTile(i, j)
     if tile.water then
         if not self:drawSprite("water", i, j) then self:drawWater(i, j, tile) end
     elseif tile.land < 4 then
-        -- coastal: draw only the water base here. The jagged pixel land edge is
-        -- baked once into self.coastMesh (drawn in one call by the world), so we
-        -- don't redraw hundreds of little polygons every frame.
+        -- coastal: draw only the (animated) water base here. The jagged pixel
+        -- land edge is baked into self.coastMesh, drawn in one call by the world.
         if not self:drawSprite("water", i, j) then self:drawWater(i, j, tile) end
-    else
-        if not self:drawSprite(tile.type, i, j) then self:drawLandFull(i, j, tile) end
     end
+    -- FULL-land tiles draw nothing per-frame: they're baked into self.landMesh
+    -- (one GPU call). drawLandFull/drawTexture are kept only as a fallback.
 end
 
 -- Bake the whole jagged, pixelized shoreline into ONE static mesh (built once at
@@ -311,6 +413,7 @@ function Terrain:buildCoastMesh()
     end
 
     for i = 1, self.nx do
+        Loader.tick()
         for j = 1, self.ny do
             local tile = self.tiles[i][j]
             if (not tile.water) and tile.land < 4 then
@@ -348,6 +451,93 @@ function Terrain:buildCoastMesh()
 
     if #v > 0 then
         self.coastMesh = love.graphics.newMesh(v, "triangles", "static")
+    end
+end
+
+-- Bake all FULL-land tiles into ONE static mesh, at SUB-TILE PIXEL resolution:
+-- every tile is split into SUBPIX² little cells (like the coastline), the tile's
+-- four corner heights are bilinearly interpolated so the surface stays smooth,
+-- and each pixel is coloured from its height + FINE world-space noise. Material
+-- (grass -> snow by height, rock on slopes) therefore reads as granular pixel
+-- terrain flowing across many tiles — not big per-tile triangles. Flat-shaded
+-- per pixel for relief. Emitted back-to-front (by i+j) so the mesh self-occludes.
+function Terrain:buildLandMesh()
+    local T = config.TILE
+    local M = config.MOUNTAINS
+    local seed = config.WORLD_SEED
+    local N = M.SUBPIX or 6
+    local v = {}
+    local Lx, Ly, Lz = -0.45, -0.45, 0.77
+    local grass = config.colors.grass.top
+    local rock  = config.colors.rock.top
+    local snow  = { 0.93, 0.95, 0.98 }
+    local snowStart = (M.SNOW_LEVEL - 2) * M.STEP
+    local snowFull  = M.SNOW_LEVEL * M.STEP
+
+    -- granular material colour: grass->snow by height, with FINE per-pixel noise
+    local function material(z, gx, gy)
+        local n = fbm(gx / 21, gy / 21, seed + 900)       -- fine = pixel-scale grain
+        local sa = (z - snowStart) / math.max(1, snowFull - snowStart)
+        if sa < 0 then sa = 0 elseif sa > 1 then sa = 1 end
+        local f = 0.84 + 0.26 * n
+        return (grass[1] + (snow[1] - grass[1]) * sa) * f,
+               (grass[2] + (snow[2] - grass[2]) * sa) * f,
+               (grass[3] + (snow[3] - grass[3]) * sa) * f
+    end
+
+    local function emit(gx, gy, z, r, g, b)
+        local px, py = Iso.project(gx, gy, z)
+        v[#v + 1] = { px, py, 0, 0, r, g, b, 1 }
+    end
+
+    local order = {}
+    for i = 1, self.nx do
+        for j = 1, self.ny do
+            local tile = self.tiles[i][j]
+            if (not tile.water) and tile.land >= 4 then order[#order + 1] = { i, j } end
+        end
+    end
+    table.sort(order, function(a, b) return (a[1] + a[2]) < (b[1] + b[2]) end)
+
+    for _, ij in ipairs(order) do
+        Loader.tick()
+        local i, j = ij[1], ij[2]
+        local x0 = (i - 1) * T
+        local y0 = (j - 1) * T
+        local zA, zB = self.cz[i][j], self.cz[i + 1][j]      -- corners: A(0,0) B(1,0)
+        local zC, zD = self.cz[i + 1][j + 1], self.cz[i][j + 1] --          C(1,1) D(0,1)
+        local function H(u, w) return (zA + (zB - zA) * u) + ((zD + (zC - zD) * u) - (zA + (zB - zA) * u)) * w end
+
+        -- tile shade + rockiness from its overall slope (one normal per tile)
+        local nx = (zA - zB) + (zD - zC)
+        local ny = (zA - zD) + (zB - zC)
+        local nz = 2 * T
+        local nl = math.sqrt(nx * nx + ny * ny + nz * nz); if nl < 1e-6 then nl = 1 end
+        local d = (nx * Lx + ny * Ly + nz * Lz) / nl; if d < 0 then d = 0 end
+        local sh = 0.50 + 0.60 * d
+        local slope = math.sqrt(nx * nx + ny * ny) / nl
+        local rk = (slope - 0.05) / 0.18; if rk < 0 then rk = 0 elseif rk > 1 then rk = 1 end
+
+        for a = 0, N - 1 do
+            for b = 0, N - 1 do
+                local u0, u1 = a / N, (a + 1) / N
+                local w0, w1 = b / N, (b + 1) / N
+                local gx0, gx1 = x0 + u0 * T, x0 + u1 * T
+                local gy0, gy1 = y0 + w0 * T, y0 + w1 * T
+                local h00, h10 = H(u0, w0), H(u1, w0)
+                local h11, h01 = H(u1, w1), H(u0, w1)
+                local cz = H((u0 + u1) / 2, (w0 + w1) / 2)
+                local mr, mg, mb = material(cz, (gx0 + gx1) / 2, (gy0 + gy1) / 2)
+                mr = (mr + (rock[1] - mr) * rk) * sh
+                mg = (mg + (rock[2] - mg) * rk) * sh
+                mb = (mb + (rock[3] - mb) * rk) * sh
+                emit(gx0, gy0, h00, mr, mg, mb); emit(gx1, gy0, h10, mr, mg, mb); emit(gx1, gy1, h11, mr, mg, mb)
+                emit(gx0, gy0, h00, mr, mg, mb); emit(gx1, gy1, h11, mr, mg, mb); emit(gx0, gy1, h01, mr, mg, mb)
+            end
+        end
+    end
+    if #v > 0 then
+        self.landMesh = love.graphics.newMesh(v, "triangles", "static")
     end
 end
 

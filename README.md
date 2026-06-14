@@ -8,9 +8,21 @@ byer, frakter passasjerer og annen last og tjener gullmynter.
 ## Start spillet
 
 Last ned **Båtspillet.dmg** fra [Releases](https://github.com/tk512/fespill/releases),
-åpne den og dra spillet over i Applications-katalogen. Første gang må du høyreklikke på
-spillet og velge **Åpne** (det er ikke signert, så du må kanskje inn i 
-Innstillinger -> Personvern -> "Åpne likevel").  Eller bare kjør spillet i LÖVE2D med .love filen.
+åpne den og dra spillet over i Applications-katalogen. (LÖVE er pakket inne i appen –
+du trenger ikke installere noe ekstra.)
+
+Spillet er ikke signert hos Apple, så macOS blokkerer det første gang. Enkleste
+fiks – åpne **Terminal**, lim inn og trykk Enter:
+
+```
+xattr -dr com.apple.quarantine "/Applications/Båtspillet.app"
+```
+
+(Alternativt: dobbeltklikk appen så den feiler, gå til **Systeminnstillinger →
+Personvern og sikkerhet**, bla ned og klikk **«Åpne likevel»**. På nyere macOS
+funker ikke alltid den knappen – da er Terminal-linja over tryggest.)
+
+Eller bare kjør `.love`-fila direkte hvis du har LÖVE installert.
 
 ## Kontroller
 

@@ -17,6 +17,7 @@ local Terrain      = require("src.systems.terrain")
 local Objects      = require("src.systems.objects")
 local CargoSystem  = require("src.systems.cargo")
 local Fog          = require("src.systems.fog")
+local Loader       = require("src.systems.loader")
 local Boat         = require("src.entities.boat")
 local Port         = require("src.entities.port")
 local Pirate       = require("src.entities.pirate")
@@ -53,27 +54,29 @@ function World:load(game)
         self.objects:add(port:toDockObject())   -- the pier, as its own object
     end
     for _, p in ipairs(self.terrain.props) do
-        if p.kind == "forest" then
+        Loader.tick()
+        local ptile = self.terrain.tiles[p.tx][p.ty]
+        local pz = ptile.z or 0                       -- sit the prop on the terrain height
+        if (p.kind == "forest" or p.kind == "house")
+            and (ptile.level or 0) >= config.MOUNTAINS.TREELINE_LEVEL then
+            -- above the treeline: bare rock / snow — no forests or stray houses
+        elseif p.kind == "forest" then
             self.objects:add({
-                tx = p.tx, ty = p.ty, z = p.z,
+                tx = p.tx, ty = p.ty, z = pz,
                 draw = function(_, g) Objects.drawForest(g, p.salt) end,
             })
         elseif p.kind == "house" then
             self.objects:add({
-                tx = p.tx, ty = p.ty, z = p.z,
+                tx = p.tx, ty = p.ty, z = pz,
                 sprite = "props/house.png",
                 draw = function(_, g)  -- fallback if the PNG is missing
                     Objects.building(g.cx, g.cy, 16, 16, g.z, 22, 14,
                         config.colors.building_wall, config.colors.building_dk)
                 end,
             })
-        else
-            self.objects:add({
-                tx = p.tx, ty = p.ty, z = p.z,
-                sprite = "props/" .. p.kind .. ".png",
-                draw = function(_, g) Objects.drawRock(g) end,
-            })
         end
+        -- (scattered "rock" props removed — they read as little brown blobs; the
+        -- rocky mountain slopes already supply the rock look.)
     end
     -- Cities: scatter buildings around each port to show how big the town is.
     for _, port in ipairs(self.ports) do
@@ -96,6 +99,8 @@ function World:load(game)
     self.dock = nil          -- the docking screen overlay, when open
     self.dockSuppress = nil  -- port id we just left a dock for (don't re-pop)
     self.items = {}  -- reused render list (sorted each frame)
+
+    self:buildClouds()       -- soft clouds drifting around the mountain peaks
 
     -- Pirate: none yet; can first appear after SPAWN_GRACE seconds of sailing
     -- with gold aboard. (See updatePirate.)
@@ -150,7 +155,7 @@ function World:scatterCity(port)
             local c = cands[idx]
             local fn = m.fn
             self.objects:add({
-                tx = c.i, ty = c.j, z = 0, sprite = m.sprite,
+                tx = c.i, ty = c.j, z = self.terrain:tileZ(c.i, c.j), sprite = m.sprite,
                 draw = function(_, g) fn(g) end,
             })
         end
@@ -161,7 +166,7 @@ function World:scatterCity(port)
             placed = placed + 1
             local c = cands[k]
             self.objects:add({
-                tx = c.i, ty = c.j, z = 0, sprite = "props/house.png",
+                tx = c.i, ty = c.j, z = self.terrain:tileZ(c.i, c.j), sprite = "props/house.png",
                 draw = function(_, g)
                     Objects.building(g.cx, g.cy, 16, 16, g.z, 22, 14,
                         config.colors.building_wall, config.colors.building_dk)
@@ -245,6 +250,79 @@ function World:scatterAmbientBoats(count)
     end
 end
 
+-- True if (x,y) is within `r` of any town (so we don't park clouds over them).
+function World:nearAnyPort(x, y, r)
+    for _, p in ipairs(self.ports) do
+        local dx, dy = x - p.x, y - p.y
+        if dx * dx + dy * dy < r * r then return true end
+    end
+    return false
+end
+
+-- Find each island's summit; if it's a real mountain (tall enough), float a
+-- couple of soft clouds above it. So clouds gather around mountains and skip the
+-- flat little islands.
+function World:buildClouds()
+    local T = config.TILE
+    self.clouds = {}
+    for _, isl in ipairs(self.terrain.islandCenters) do
+        local ti = math.floor(isl.x / T) + 1
+        local tj = math.floor(isl.y / T) + 1
+        local peakZ, pcx, pcy = 0, isl.x, isl.y
+        for di = -8, 8 do
+            for dj = -8, 8 do
+                local z = self.terrain:tileZ(ti + di, tj + dj)
+                if z > peakZ then peakZ, pcx, pcy = z, (ti + di - 0.5) * T, (tj + dj - 0.5) * T end
+            end
+        end
+        if peakZ >= 90 then                       -- only over genuinely tall peaks
+            for k = 1, 2 do
+                local cx = pcx + (k - 1.5) * 150
+                local cy = pcy + (k - 1.5) * 70
+                if not self:nearAnyPort(cx, cy, 500) then   -- keep clouds off the towns
+                    self.clouds[#self.clouds + 1] = {
+                        x = cx, y = cy,
+                        z = peakZ + 130 + k * 28,           -- float high above the summit
+                        scale = 22 + k * 7,
+                        phase = isl.x * 0.01 + k * 1.7, range = 55 + k * 15,
+                    }
+                end
+            end
+        end
+    end
+end
+
+-- Draw the mountain clouds as small, BLOCKY pixel puffs (to match the game's
+-- pixel art, not smooth vector blobs). Each puff is rows of chunky blocks within
+-- a radius; a cloud is a few overlapping puffs. Drawn in world space, lifted to
+-- their z so they hang over the peaks, drifting slowly.
+local function pixelPuff(cx, cy, r, blk, a)
+    local r2 = r * r
+    for by = -r, r, blk do
+        local span = math.floor(math.sqrt(math.max(0, r2 - by * by)) / blk) * blk
+        if span > 0 then
+            love.graphics.setColor(0.97, 0.98, 1.0, a)
+            love.graphics.rectangle("fill", cx - span, cy + by, span * 2, blk)
+        end
+    end
+end
+
+function World:drawClouds()
+    if not self.clouds then return end
+    local t = love.timer.getTime()
+    local blk = 2                                  -- lightly pixelated, not chunky
+    for _, c in ipairs(self.clouds) do
+        local gx = c.x + math.sin(t * 0.04 + c.phase) * c.range
+        local sx, sy = Iso.project(gx, c.y, c.z)
+        local s = c.scale
+        pixelPuff(sx, sy, s, blk, 0.9)
+        pixelPuff(sx - s * 0.75, sy + s * 0.20, s * 0.6, blk, 0.9)
+        pixelPuff(sx + s * 0.78, sy + s * 0.22, s * 0.66, blk, 0.9)
+        pixelPuff(sx + s * 0.18, sy - s * 0.34, s * 0.55, blk, 0.9)
+    end
+    love.graphics.setColor(1, 1, 1)
+end
+
 function World:update(dt)
     -- While the docking screen is up, the world is frozen.
     if self.dock then self.dock:update(dt); return end
@@ -257,11 +335,11 @@ function World:update(dt)
 
     -- Reveal fog around the boat; persist new discoveries (throttled to disk).
     if self.fog:revealAround(self.boat.x, self.boat.y, config.FOG_REVEAL) then
-        self.game.state.fog = self.fog:serialize()
-        self._fogDirty = true
+        self._fogDirty = true   -- mark only; serializing the whole grid every frame was costly
     end
     self._fogSaveT = self._fogSaveT + dt
-    if self._fogDirty and self._fogSaveT > 8 then   -- write to disk rarely (avoids hitches)
+    if self._fogDirty and self._fogSaveT > 8 then   -- serialize + write to disk rarely
+        self.game.state.fog = self.fog:serialize()
         self.game:save(); self._fogDirty = false; self._fogSaveT = 0
     end
 
@@ -302,7 +380,7 @@ function World:update(dt)
 
     self:updatePirate(dt)
 
-    self.camera:edgeScroll(dt)   -- push mouse to screen edge to scroll
+    self.camera:edgeScroll(dt, self.boat.x, self.boat.y)  -- scroll, but never lose the boat
     self.camera:update(dt)
 
     if self.toast.timer > 0 then
@@ -429,6 +507,15 @@ function World:openDock(port)
     self.dockSuppress = port.id    -- don't immediately re-pop while still in range
 end
 
+-- Serialize the explored fog into save state now (called before an immediate
+-- save, e.g. ESC to menu), since reveals are otherwise only flushed every ~8s.
+function World:flushFog()
+    if self._fogDirty then
+        self.game.state.fog = self.fog:serialize()
+        self._fogDirty = false
+    end
+end
+
 function World:showToast(text)
     self.toast.text, self.toast.timer, self.toast.rise = text, 2.0, 0
 end
@@ -439,6 +526,7 @@ function World:draw()
 
     self.camera:attach()
     self:drawWorldSorted()
+    self:drawClouds()              -- soft clouds hanging over the mountain peaks
     self:drawFog()                 -- dark over everything not yet explored
     self.camera:detach()
 
@@ -550,10 +638,11 @@ function World:drawFog()
     for i = i0, i1 do
         for j = j0, j1 do
             if not self.fog:pointRevealed((i - 0.5) * T, (j - 0.5) * T) then
-                local ax, ay = Iso.project((i - 1) * T, (j - 1) * T, 0)
-                local bx, by = Iso.project(i * T,       (j - 1) * T, 0)
-                local cx, cy = Iso.project(i * T,       j * T,       0)
-                local dx, dy = Iso.project((i - 1) * T, j * T,       0)
+                -- follow the sloped surface (per-corner heights) so peaks stay hidden
+                local ax, ay = Iso.project((i - 1) * T, (j - 1) * T, self.terrain:cornerZ(i, j))
+                local bx, by = Iso.project(i * T,       (j - 1) * T, self.terrain:cornerZ(i + 1, j))
+                local cx, cy = Iso.project(i * T,       j * T,       self.terrain:cornerZ(i + 1, j + 1))
+                local dx, dy = Iso.project((i - 1) * T, j * T,       self.terrain:cornerZ(i, j + 1))
                 love.graphics.polygon("fill", ax, ay, bx, by, cx, cy, dx, dy)
             end
         end
@@ -576,30 +665,22 @@ function World:drawWorldSorted()
     local minGx, minGy, maxGx, maxGy = self.camera:groundBounds()
     local i0, j0, i1, j1 = self.terrain:visibleRange(minGx, minGy, maxGx, maxGy)
 
-    -- Pass 1: ground tiles. Entries are POOLED (reused frame to frame) so we
-    -- don't allocate one table per visible tile every frame (that garbage was
-    -- causing periodic GC pauses / framerate dips).
-    local tiles = self.items
-    local tpool = self._tilePool
-    if not tpool then tpool = {}; self._tilePool = tpool end
-    local nt = 0
+    -- Pass 1: ground tiles. They're FLAT, non-overlapping diamonds, so draw
+    -- order doesn't matter — no need to collect + sort them every frame (that
+    -- sort was wasted CPU, especially when zoomed out). Just draw the visible
+    -- ones directly. Only water is drawn per-tile (it animates); full-land tiles
+    -- are baked into landMesh and draw nothing here.
     for i = i0, i1 do
         for j = j0, j1 do
-            nt = nt + 1
-            local e = tpool[nt]; if not e then e = {}; tpool[nt] = e end
-            e.depth = self.terrain:tileDepth(i, j); e.i = i; e.j = j; e.seq = nt
-            tiles[nt] = e
+            self.terrain:drawTile(i, j)
         end
     end
-    for k = #tiles, nt + 1, -1 do tiles[k] = nil end
-    table.sort(tiles, byDepth)
-    for k = 1, nt do local t = tiles[k]; self.terrain:drawTile(t.i, t.j) end
 
-    -- Baked jagged shoreline (one draw call) on top of the flat water bases.
-    if self.terrain.coastMesh then
-        love.graphics.setColor(1, 1, 1)
-        love.graphics.draw(self.terrain.coastMesh)
-    end
+    -- Baked static ground, one GPU call each: full-land tiles, then the jagged
+    -- shoreline on top of the water bases.
+    love.graphics.setColor(1, 1, 1)
+    if self.terrain.landMesh  then love.graphics.draw(self.terrain.landMesh)  end
+    if self.terrain.coastMesh then love.graphics.draw(self.terrain.coastMesh) end
 
     -- Pass 2: things that sit on the ground (also pooled — no per-frame garbage).
     local vis = self._vis

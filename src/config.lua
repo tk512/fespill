@@ -57,6 +57,24 @@ config.ISLANDS = {
     { x = 5100, y = 4300, radius = 1260 },  -- Florida  (big, central sea)
 }
 
+-- ── Mountains (VISUAL terrain height — SimCity-2000 style terracing) ────────
+-- The sea stays a flat plane (the boat sails at z=0); islands rise purely as a
+-- visual. Each land tile gets an integer elevation LEVEL from medium-frequency
+-- noise shaped by the island mask (low at coasts, higher inland), giving many
+-- stacked flat PLATEAUS; the tiles that bridge two levels become shaded SLOPE
+-- tiles (the contour edges). Flat tops are grass, or snow up high; slope tiles
+-- are rocky mountainside. Tiles near a town are flattened. Baked into the static
+-- land mesh (one draw call); real PNG tile-sprites can drop in later.
+config.MOUNTAINS = {
+    MAX_LEVEL      = 8,    -- many elevation steps -> layered terraces (like SC2000)
+    STEP           = 15,   -- world-units rise per level (each terrace step)
+    NOISE_SCALE    = 460,  -- medium noise = terrace patches a few tiles across
+    SNOW_LEVEL     = 7,    -- flat tops at/above this level are snow
+    TREELINE_LEVEL = 4,    -- levels at/above this: no forests/houses
+    FLATTEN_R      = 7,    -- tile radius flattened around each town
+    SUBPIX         = 6,    -- pixels per tile side (granular surface, like the coast)
+}
+
 -- ── Fog of war (exploration) ───────────────────────────────────────────────
 -- The world starts as dark "unknown" zones. As the boat sails, the area around
 -- it is revealed for good (saved), so discovering the map is a surprise. A
@@ -81,6 +99,12 @@ config.CAMERA_DEFAULT_ZOOM = 1.4 -- starting view: close enough to see detail
 -- mouse to the screen edges (or right-drag); press C to recenter on the boat.
 config.EDGE_SCROLL_MARGIN = 38  -- px from a screen edge that triggers scrolling
 config.EDGE_SCROLL_SPEED  = 950 -- scroll speed (screen px / second)
+-- Edge-scrolling can't drift the view too far from the boat: it stops once the
+-- boat would move outside the central band of the screen. So a kid who leaves
+-- the mouse parked at an edge just nudges the view a little and never loses the
+-- boat off-screen. This is the max the boat may sit from screen centre, as a
+-- fraction of the screen (0.34 ≈ keep the boat within the central ~68%).
+config.EDGE_SCROLL_KEEP   = 0.34
 
 -- ── Gameplay feel (kept gentle on purpose — see CLAUDE.md "child-friendly") ─
 config.PICKUP_RADIUS  = 95    -- how close to a harbour the boat must get to dock
@@ -97,6 +121,8 @@ config.BOUNCE_DAMPING = 0.45  -- how soft collisions feel (0 = dead stop, 1 = bo
 -- (or you lose it for long enough) it gives up and sails off into the void.
 config.PIRATE = {
     SPEED_FRAC    = 0.78,   -- pirate top speed as a fraction of YOUR boat's (close, but out-runnable)
+    LENGTH        = 2.6,    -- how much LONGER than a normal ship (bow→stern); a long galleon
+    WIDTH         = 1.45,   -- modest beam (width); height stays moderate so it isn't a tower
     SPAWN_GRACE   = 30,     -- seconds of eligible sailing before one can first appear
     SPAWN_MEAN    = 70,     -- avg seconds of sailing between spawn rolls (higher = rarer)
     RESPAWN_GRACE = 25,     -- quiet time after one leaves before another can come

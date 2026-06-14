@@ -90,6 +90,8 @@ function PortScreen:playVoice()
     -- (assets/voice/oppdrag.ogg). Otherwise a per-town clip if you've recorded
     -- one (assets/voice/dock_<id>.ogg), else a friendly boat horn.
     if self.mode == "offer" and Assets.playNamedVoice("oppdrag") then return end
+    -- Wrong harbour while on a mission: the recorded "FEIL HAVN!"
+    if self.mode == "busy" and Assets.playNamedVoice("feil_havn") then return end
     if Assets.playNamedVoice("dock_" .. self.port.id) then return end
     Assets.playSfx("horn")
 end

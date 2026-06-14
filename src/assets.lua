@@ -182,18 +182,23 @@ local function makeSounds()
         return 0
     end), "static")
 
-    -- Cannon BOOM — horrific: a vicious crack, a deep sub-bass that plunges in
-    -- pitch, a dissonant growl overtone, and a long low-passed rumble tail that
-    -- lingers like distant thunder. A little clipping on purpose = grit.
+    -- Cannon BOOM — HUGE: a vicious crack, a very deep sub-bass that plunges in
+    -- pitch, a dissonant growl, a delayed second concussion (a big ship's gun),
+    -- and a long low-passed rumble tail that lingers like thunder. A little
+    -- clipping on purpose = grit.
     local boomRumble = 0
-    Assets.sounds.cannon = love.audio.newSource(render(0.95, function(t)
-        local crack  = rnd() * math.max(0, 1 - t / 0.03) * 1.2          -- sharp muzzle crack
-        local subF   = 68 - 42 * t                                       -- deep pitch plunge
-        local sub    = math.sin(TAU * subF * t) * math.max(0, 1 - t / 0.7)
-        local growl  = 0.3 * math.sin(TAU * subF * 1.41 * t) * math.max(0, 1 - t / 0.5) -- dissonant tritone-ish
-        boomRumble   = boomRumble * 0.9 + rnd() * 0.1                     -- low-pass rumble
-        local rumble = boomRumble * math.max(0, 1 - t / 0.92) * 0.9
-        return (sub * 1.05 + crack + growl + rumble) * env(t, 0.95, 0.0005, 0.32)
+    Assets.sounds.cannon = love.audio.newSource(render(1.3, function(t)
+        local crack  = rnd() * math.max(0, 1 - t / 0.035) * 1.3         -- sharp muzzle crack
+        local subF   = 58 - 38 * t                                       -- DEEP pitch plunge
+        local sub    = math.sin(TAU * subF * t) * math.max(0, 1 - t / 0.9)
+        local growl  = 0.32 * math.sin(TAU * subF * 1.41 * t) * math.max(0, 1 - t / 0.6) -- dissonant
+        -- a delayed second concussion ~0.16s later (heavy, big-bore)
+        local t2     = t - 0.16
+        local thump2 = 0
+        if t2 > 0 then thump2 = math.sin(TAU * (52 - 30 * t2) * t2) * math.max(0, 1 - t2 / 0.5) * 0.7 end
+        boomRumble   = boomRumble * 0.92 + rnd() * 0.08                  -- low-pass rumble
+        local rumble = boomRumble * math.max(0, 1 - t / 1.25) * 1.0
+        return (sub * 1.1 + crack + growl + thump2 + rumble) * env(t, 1.3, 0.0005, 0.4)
     end), "static")
 
     -- Cannonball HIT on the boat: a wet thud + a sad little downward "you lost
@@ -317,12 +322,24 @@ local function makeDockMoods()
     end), "static")
     Assets.sounds.dock_scary:setLooping(true)
 
-    -- Chase drone: an ominous pulsing low bed that loops while a pirate hunts you.
+    -- Chase drone: a deep, menacing bed that loops while a pirate hunts you — a
+    -- sub rumble with a slow growl sweep, a pounding heartbeat, and a dissonant
+    -- minor-second cluster that grinds with tremolo. Genuinely uneasy.
+    local chasePrev, chaseSeed = 0, 4477
+    local function crnd()
+        chaseSeed = (chaseSeed * 1103515245 + 12345) % 2147483648
+        return (chaseSeed / 2147483648) * 2 - 1
+    end
     Assets.sounds.chase = love.audio.newSource(render(4.0, function(t)
-        local drone = 0.4 * math.sin(TAU * 55 * t)                 -- deep rumble (A1)
-        local pulse = 0.55 + 0.45 * math.sin(TAU * 2.2 * t)        -- racing heartbeat
-        local tens  = 0.2 * math.sin(TAU * 146.8 * t) * (0.5 + 0.5 * math.sin(TAU * 5 * t))
-        return (drone * pulse + tens) * 0.45
+        local droneF = 41 + 3 * math.sin(TAU * 0.5 * t)            -- deep, slowly wavering sub
+        local drone  = 0.5 * math.sin(TAU * droneF * t)
+        local beat   = 0.5 + 0.5 * math.sin(TAU * 2.4 * t)         -- pounding heartbeat
+        beat = beat * beat                                          -- sharper thuds
+        local growl  = 0.22 * math.sin(TAU * 82 * t) * (0.5 + 0.5 * math.sin(TAU * 6 * t))
+        local clash  = 0.16 * (math.sin(TAU * 146.8 * t) + math.sin(TAU * 155.6 * t)) -- minor-2nd grind
+                       * (0.5 + 0.5 * math.sin(TAU * 4 * t))
+        chasePrev = chasePrev * 0.85 + crnd() * 0.15                -- low hiss of dread
+        return (drone * beat + growl + clash + chasePrev * 0.18) * 0.5
     end), "static")
     Assets.sounds.chase:setLooping(true)
 end

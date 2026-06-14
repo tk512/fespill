@@ -35,6 +35,7 @@ return {
     {
         id    = "oslo",
         name  = "Oslo",
+        master = "Donald Duck",
         x     = 9000, y = 5400,        -- NW coast of the big SE island
         color = {0.35, 0.45, 0.78},
         size  = "large",
@@ -52,6 +53,7 @@ return {
     {
         id    = "leroy",
         name  = "Lerøy",              -- famous for salmon → fish cargo
+        master = "Farfar",
         x     = 3500, y = 5300,        -- NE coast of the SW island
         color = {0.55, 0.45, 0.75},
         size  = "medium",

@@ -227,8 +227,8 @@ function Boat:draw()
     -- Big side-profile billboard anchored on the water. Just two photos: one
     -- bow-right (def.sprite) and one bow-left (<base>_left.png / def.spriteLeft),
     -- chosen by which way the boat is heading ON SCREEN. No rotation — a rotated
-    -- side view looked silly "surfing" upwards. If there's no left photo we just
-    -- mirror the right one.
+    -- side view looked silly "surfing"/"falling". If there's no left photo we
+    -- just mirror the right one.
     local rightImg = self.def.sprite and Assets.image("boats/" .. self.def.sprite)
     if rightImg then
         local base = self.def.sprite:gsub("%.png$", "")

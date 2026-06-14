@@ -41,8 +41,9 @@ function Game:load()
 
     -- Register scenes. (Required lazily so a scene can reference Game safely.)
     self.scenes = {
-        menu  = require("src.scenes.menu"),
-        world = require("src.scenes.world"),
+        menu    = require("src.scenes.menu"),
+        loading = require("src.scenes.loading"),
+        world   = require("src.scenes.world"),
     }
 
     Assets.startMusic()
@@ -149,6 +150,7 @@ function Game:keypressed(key, scancode, isrepeat)
         Assets.refreshAudio(); return
     elseif key == "escape" then
         if self.sceneName == "world" then
+            if self.scene.flushFog then self.scene:flushFog() end  -- persist latest exploration
             self:save()
             self:setScene("menu")
         else
